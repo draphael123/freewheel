@@ -13,6 +13,8 @@ import * as THREE from './vendor/three.module.js';
 import * as T from './track.js';
 import * as THEME from './theme.js';
 
+export const SHOULDER = 1.7;
+
 export const opts = {
   shadow: true,      // 1  hard contact ellipse on the surface below the cart
   tether: true,      // 2  vertical line from cart to shadow while airborne
@@ -98,7 +100,12 @@ function buildRoad(tr) {
   if (rings[rings.length - 1] < T.LENGTH) rings.push(T.LENGTH);
 
   const pos = [], plain = [], tint = [], idx = [];
-  const W = T.HALF_W, D = T.SLAB;
+  /* The slab is built WIDER than the drivable width. Marker posts used to be
+     placed 1 m outside T.HALF_W, where surfaceAt merely extrapolates the road
+     plane — so they stood in mid-air off the edge of the world. A shoulder
+     gives them somewhere real to stand, and the painted edge lines below are
+     what actually tell the player where the road ends. */
+  const W = T.HALF_W + SHOULDER, D = T.SLAB;
 
   rings.forEach((s) => {
     const c = v3(T.surfaceAt(s, 0));
@@ -172,13 +179,21 @@ function buildRoad(tr) {
    effect. Built as loose quads rather than a texture so it follows the surface
    over crests without any UV stretching. */
 function buildCentreLine() {
-  const DASH = 4.5, GAP = 4.0, W = 0.42, LIFT = 0.05;
+  stripe(4.5, 4.0, 0.42, [0], 1.0);                    // centre dashes
+  stripe(6.0, 0.0, 0.26, [-T.HALF_W, T.HALF_W], 0.62); // solid edge lines
+}
+
+/* One ribbon builder for both. Loose quads rather than a texture so the paint
+   follows the surface over crests and through banking without UV stretching. */
+function stripe(DASH, GAP, W, offsets, dim) {
+  const LIFT = 0.05;
   const pos = [], idx = [];
   let n = 0;
   for (let s0 = 4; s0 < T.LENGTH - DASH; s0 += DASH + GAP) {
+   for (const off of offsets) {
     const a = [];
     for (const s of [s0, s0 + DASH]) {
-      const c = v3(T.surfaceAt(s, 0));
+      const c = v3(T.surfaceAt(s, off));
       const { right, nrm } = basisAt(s);
       c.addScaledVector(nrm, LIFT);
       a.push(c.clone().addScaledVector(right, -W), c.clone().addScaledVector(right, W));
@@ -186,12 +201,13 @@ function buildCentreLine() {
     for (const p of a) pos.push(p.x, p.y, p.z);
     idx.push(n, n + 1, n + 2, n + 1, n + 3, n + 2);   // normal +up; see buildRoad
     n += 4;
+   }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
-  const m = new THREE.MeshBasicMaterial({ color: TH.dash });
-  courseRoot.add(new THREE.Mesh(g, m));
+  const c = new THREE.Color(TH.dash).multiplyScalar(dim);
+  courseRoot.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: c })));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -385,7 +401,7 @@ function buildProps(tr) {
   for (let s = 10; s < T.LENGTH - 10; s += 22, k++) {
     const { right, nrm } = basisAt(s);
     for (const side of [-1, 1]) {
-      const c = v3(T.surfaceAt(s, side * (T.HALF_W + 1.0)));
+      const c = v3(T.surfaceAt(s, side * (T.HALF_W + SHOULDER * 0.5)));
       const p = new THREE.Mesh(bg, k % 2 ? mA : mB);
       p.position.copy(c).addScaledVector(nrm, 1.0);
       p.castShadow = true;

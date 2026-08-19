@@ -27,7 +27,8 @@ export const tune = {
                              and every policy died on a climb looking exactly
                              like a course-design problem. */
   brake: 6.0,             // m/s^2 while the drag brake is down
-  offRoad: 0.55,          // extra rolling resistance per metre off the edge
+  wallBite: 0.42,         // speed lost per m/s of lateral speed INTO the barrier
+  wallScrub: 5.0,         // m/s^2 lost while scraping along it
 
   crouchRate: 3.6,        // how fast the rider moves between tuck and stand, /s
   crouchTravel: 0.45,     // how far the centre of mass moves, metres
@@ -54,11 +55,19 @@ export const tune = {
   landAbsorbTucked: 0.28, // ...if you were crouched when you touched down
   steerRate: 5.4,         // m/s of lateral movement at full lock
   slide: 0.010,           // how hard a corner throws you toward the outside
-  uMargin: 3.5,           /* how far past the verge you may stray before a hard
-                             stop. Relative, not absolute: HALF_W changes with
-                             the course, and a constant captured at module load
-                             would silently belong to whichever venue happened
-                             to load first. */
+  /* The flywheel also winds off the WHEELS, not only off the pump. Gating the
+     one accelerate verb behind mastery of the one hard mechanic meant a player
+     who simply held tuck completed a single stroke at the start and then never
+     charged again — so W did nothing at all and the game read as having no
+     throttle. Passive regen is deliberately slow: it guarantees the button
+     always does something, while pumping remains far and away the fast way to
+     fill it. */
+  chargeRegen: 0.055,     /* seconds of charge per second at speed. At 0.075
+                             the throttle swamped everything: all three courses
+                             collapsed to the same ~57 s and the venue identities
+                             went with them. Slow enough to stay a decision. */
+  chargeRegenV: 18,       // ...reaching full rate at this speed
+  brakeRegen: 0.26,       // braking puts speed back into the wheel
 
   /* The flywheel. Pumping spins it up, the throttle lets it back out — so
      there is a real accelerate button whose fuel is still the hill, which is
@@ -66,7 +75,11 @@ export const tune = {
      because that is the only unit a player can actually reason about. */
   thrust: 4.2,            // m/s^2 while spending
   chargeMax: 2.2,         // seconds of thrust the wheel can hold
-  chargePerPump: 0.9,     // seconds banked per m/s of pump gain
+  chargePerPump: 0.35,    /* seconds banked per m/s of pump gain. At 0.9 a single
+                             run banked 21 s of thrust off the pump alone, which
+                             made the flywheel the entire economy and dropped
+                             every course to the same ~57 s. The pump should
+                             CONTRIBUTE to the wheel, not be it. */
 
   startSpeed: 2.0,
 };
@@ -85,6 +98,7 @@ export function create() {
     lastPump: 0,            // speed gained by the most recent extension
     pumpTotal: 0, brakeTotal: 0, airTotal: 0,
     vMax: 0, lastLanding: 0, thrustTotal: 0,
+    onWall: false, wallHits: 0, lastWallBite: 0,
     input: { tuck: false, steer: 0, brake: false, thrust: false },
   };
 }
@@ -183,25 +197,33 @@ export function step(S, dt) {
       /* Spending. Deliberately available on climbs and flats, where gravity
          gives you nothing — that is where a throttle is worth having and where
          reading the hill turns into a decision rather than a reflex. */
-      if (S.input.thrust && S.charge > 0) {
-        a += K.thrust;
-        S.charge = Math.max(0, S.charge - dt);
-        S.thrustTotal += K.thrust * dt;
+      /* Spend PROPORTIONALLY to what is actually in the wheel this frame.
+         `charge > 0` plus a flat `a += thrust` is a quantisation hole: a
+         sliver of charge bought a whole frame of full thrust, so a trickle of
+         regen worth 0.055 s/s delivered full acceleration essentially all the
+         time. Measured, 3.4 s of banked charge was spent as 21.8 s of thrust. */
+      if (S.input.thrust && S.charge > 0.02) {
+        const use = Math.min(dt, S.charge);
+        a += K.thrust * (use / dt);
+        S.charge -= use;
+        S.thrustTotal += K.thrust * use;
       }
 
       const drag = K.dragTuck + (K.dragOpen - K.dragTuck) * S.c;
       a -= drag * S.v * S.v;
       a -= K.roll;
 
-      const over = Math.max(0, Math.abs(S.u) - T.HALF_W);
-      if (over > 0) a -= K.offRoad * over * S.v * 0.35;
-
       /* Brakes are a tyre force too, so ice takes them away as surely as it
-         takes away the corners. */
+         takes away the corners. Braking also winds the wheel, which gives the
+         brake a second reason to exist: shed speed you cannot use into a corner
+         and get some of it back on the climb after it. */
       if (S.input.brake) {
         const b = K.brake * T.gripAt(S.s);
         a -= b; S.brakeTotal += b * dt;
+        S.charge = Math.min(K.chargeMax, S.charge + K.brakeRegen * dt);
       }
+      S.charge = Math.min(K.chargeMax,
+        S.charge + K.chargeRegen * Math.min(1, S.v / K.chargeRegenV) * dt);
 
       S.v = Math.max(0, S.v + a * dt);
       S.s += S.v * dt;
@@ -213,14 +235,32 @@ export function step(S, dt) {
      the outward slide and it is also how much of your steering input arrives.
      Banking relieves the slide directly, because part of the cornering force
      is now being supplied by the road being tilted rather than by friction. */
+  const uPrev = S.u;
   if (!S.air) {
     const grip = T.gripAt(S.s);
     const lat = S.v * S.v * kh - K.G * Math.sin(T.bankAt(S.s));
     const drift = lat * K.slide / grip;
     S.u += (S.input.steer * K.steerRate * grip * Math.min(1, S.v / 7) + drift) * dt;
   }
-  const uMax = T.HALF_W + K.uMargin;
-  S.u = Math.max(-uMax, Math.min(uMax, S.u));
+
+  /* A barrier at the verge, not a soft penalty. Previously the cart could sit
+     three metres past the edge with a little extra rolling drag — hovering over
+     an embankment, on nothing, at no real cost. Hay bales line a closed road,
+     so: you cannot leave, and touching costs you. A bite proportional to how
+     hard you arrived, then a continuous scrub while you lean on it. */
+  const wall = T.HALF_W;
+  const wasOn = S.onWall;
+  S.onWall = Math.abs(S.u) > wall;
+  if (S.onWall) {
+    const into = Math.abs(S.u - uPrev) / dt;
+    S.u = Math.sign(S.u) * wall;
+    if (!wasOn) {
+      const bite = K.wallBite * Math.min(into, 12);
+      S.v = Math.max(0, S.v - bite);
+      S.wallHits++; S.lastWallBite = bite;
+    }
+    if (!S.air) S.v = Math.max(0, S.v - K.wallScrub * dt);
+  }
 
   if (S.v > S.vMax) S.vMax = S.v;
   if (S.s >= T.LENGTH) { S.s = T.LENGTH; S.done = true; }
@@ -312,6 +352,7 @@ export function run(policyName, opts = {}) {
     pumpGain: +S.pumpTotal.toFixed(2),
     thrustUsed: +S.thrustTotal.toFixed(2),
     airTime: +S.airTotal.toFixed(2),
+    wallHits: S.wallHits,
   };
 }
 
