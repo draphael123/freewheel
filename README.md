@@ -150,12 +150,14 @@ different paint, however different the screenshots look.
 
 | | owns | |
 |---|---|---|
-| **THE VALE** | line choice | sweepers and hairpins, 20% average grade, three drop-offs |
-| **THE SPILLWAY** | the pump | bowl-scale curvature, heavy banking, a dry concrete basin |
-| **THE COLD LINE** | grip | 0.42 grip falling to 0.28, brakes barely work |
+| **THE VALE** | line choice | 2380 m, snowline to sea — pinewood, a gorge span, a rock adit, terraces and a village street |
+| **THE SPILLWAY** | banking | 2180 m of concrete at scale — 32-degree bowls you can only carry speed through by trusting the bank, punctuated by unbanked pinches |
+| **THE COLD LINE** | grip | 1980 m with grip from 0.54 down to 0.26 on the black ice — braking barely works |
 
-Measured, they behave differently rather than merely looking different — pump
-gain over a run is **77 on the spillway, 23 on the vale, 4.6 on the ice**.
+They ask different things, and the incident counts show it. Driving the same
+reference line on each: the vale collects 11 bale hits and 1 barrier hit, the
+spillway 9 bales and **no** barrier hits (the banking holds you), and the ice 5
+bales and 5 barrier hits (it does not).
 
 A course is a declarative array of segments and nothing else. Everything else is
 derived: the hillside, the cut walls, the pylons, where trees clump, the

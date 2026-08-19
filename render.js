@@ -1627,4 +1627,4 @@ export function frame(S, dt) {
 }
 
 export function cameraYaw() { return camYaw; }
-export const _dbg = () => ({ scene, camera, roadMesh, cart, blob, sun });
+export const _dbg = () => ({ scene, camera, persp, roadMesh, cart, blob, sun, view });

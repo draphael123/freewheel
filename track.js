@@ -72,40 +72,76 @@ export const COURSES = {
 
   spillway: {
     title: 'THE SPILLWAY',
-    blurb: 'Concrete at bowl scale. The curvature is tight enough to pump for real — work the transitions.',
-    owns: 'the pump',
+    blurb: 'Concrete at scale. The banking is what lets you hold corners nothing else could — trust it, or brake for the pinches.',
+    owns: 'banking',
     theme: 'concrete',
     halfW: 11.0, slab: 2.2, grip: 1.05,
+    /* Identity: BANKING. Bank relieves the corner directly (push = v^2*kh -
+       g*sin(bank)), so a heavily banked bowl can be carried at a speed that
+       would be impossible flat. The course alternates huge banked sweeps with
+       narrow UNBANKED pinches, so the decision is whether the next corner is
+       one you can lean on or one you have to slow for.
+
+       It used to own "the pump", a mechanic that no longer exists — the card
+       in the picker was advertising something the game could not do. */
     segments: [
-      { name: 'THE HEADRACE',  len:  90, turn:    0, grade: -0.12 , zone: 'rock' },
-      { name: 'FIRST BOWL',    len: 120, turn:   10, grade: -0.10, dip: 5.5 , zone: 'rock' },
-      { name: 'THE WASHBOARD', len: 220, turn:  -12, grade: -0.13, bowls: 7, bowlAmp: 0.85 , zone: 'rock' },
-      { name: 'THE WEIR',      len: 110, turn:    0, grade: -0.14, step: 9.0 , zone: 'rock' },
-      { name: 'THE BEND',      len: 140, turn:  -95, grade: -0.16, bank: 22 , zone: 'rock' },
-      { name: 'THE COMBS',     len: 240, turn:   15, grade: -0.14, bowls: 8, bowlAmp: 0.80 , zone: 'rock' },
-      { name: 'THE SIPHON',    len:  90, turn:   60, grade: +0.04, bank: 14 , zone: 'rock' },
-      { name: 'DROP SHAFT',    len: 130, turn:    0, grade: -0.20, stairs: 3, stairH: 7.0 , zone: 'rock' },
-      { name: 'THE FLUME',     len: 260, turn:  -70, grade: -0.18, bank: 18, bowls: 6, bowlAmp: 0.90 , zone: 'rock' },
-      { name: 'THE OUTFALL',   len: 160, turn:   25, grade: -0.05 , zone: 'rock' },
+      { name: 'THE HEADRACE',   len: 110, turn:    0, grade: -0.10, w: 11.0, zone: 'rock' },
+      { name: 'THE INTAKE',     len: 150, turn:   40, grade: -0.16, w:  9.0, zone: 'rock', bank: 16 },
+      { name: 'FIRST BOWL',     len: 170, turn: -120, grade: -0.14, w: 12.0, zone: 'rock', bank: 30 },
+      { name: 'THE CHANNEL',    len: 200, turn:   25, grade: -0.20, w:  7.5, zone: 'rock' },
+      { name: 'THE WEIR',       len: 130, turn:    0, grade: -0.16, w: 10.0, zone: 'rock', step: 12.0 },
+      { name: 'THE GREAT BEND', len: 220, turn:  150, grade: -0.15, w: 13.0, zone: 'village', bank: 32 },
+      { name: 'THE SLUICE',     len: 100, turn:  -30, grade: -0.12, w:  5.0, zone: 'village' },
+      { name: 'DROP SHAFT',     len: 150, turn:    0, grade: -0.24, w:  9.0, zone: 'rock', stairs: 3, stairH: 7.0 },
+      { name: 'THE SPIRAL',     len: 240, turn: -190, grade: -0.18, w: 11.0, zone: 'rock', bank: 28 },
+      { name: 'THE APRON',      len: 180, turn:   60, grade: -0.13, w: 12.0, zone: 'farm', bank: 10 },
+      { name: 'THE CHUTE',      len: 140, turn:  -45, grade: -0.34, w:  8.0, zone: 'farm' },
+      { name: 'STILLING BASIN', len: 200, turn:  110, grade: -0.09, w: 14.0, zone: 'shore', bank: 22 },
+      { name: 'THE OUTFALL',    len: 190, turn:  -50, grade: -0.05, w: 10.0, zone: 'shore' },
+    ],
+    hazards: [
+      { s: 300, u: -3.4 }, { s: 314, u: 1.2 },
+      { s: 640, u: 2.6 },
+      { s: 800, u: -2.0 }, { s: 814, u: 2.2 },
+      { s: 1090, u: -1.4 },
+      { s: 1300, u: 3.0 }, { s: 1316, u: -1.0 },
+      { s: 1610, u: 2.4 },
+      { s: 1790, u: -3.0 },
+      { s: 2050, u: 1.6 },
     ],
   },
 
   coldline: {
     title: 'THE COLD LINE',
-    blurb: 'Almost no grip. Braking barely works and the corners will not hold you — commit early.',
+    blurb: 'Almost no grip, and less on the black ice. Braking barely works and the corners will not hold you — commit early.',
     owns: 'grip',
     theme: 'ice',
     halfW: 10.0, slab: 1.6, grip: 0.42,
+    /* Identity: GRIP, varied along the course rather than set once. The
+       treeline and the hamlet are the only places you can lean on the tyres;
+       BLACK ICE and THE LAKE are where you find out what you have banked. */
     segments: [
-      { name: 'THE CORNICE',  len: 110, turn:    0, grade: -0.16 , zone: 'snow' },
-      { name: 'THE FACE',     len: 160, turn:  -40, grade: -0.30 , zone: 'snow' },
-      { name: 'THE TRAVERSE', len: 260, turn:   85, grade: -0.11, bank: 5 , zone: 'snow' },
-      { name: 'THE SERACS',   len: 140, turn:  -20, grade: -0.18, stairs: 3, stairH: 5.5 , zone: 'snow' },
-      { name: 'THE BOWL',     len: 200, turn:  120, grade: -0.15, bank: 12, dip: 7.0 , zone: 'snow' },
-      { name: 'THE NARROWS',  len: 150, turn:  -60, grade: -0.22, grip: 0.34 , zone: 'snow' },
-      { name: 'THE SHELF',    len: 120, turn:   30, grade: +0.05 , zone: 'snow' },
-      { name: 'THE DRIFT',    len: 240, turn:  -80, grade: -0.12, bank: 6, rollers: 3, rollAmp: 3.0 , zone: 'snow' },
-      { name: 'THE LAKE',     len: 200, turn:   20, grade: -0.04, grip: 0.28 , zone: 'snow' },
+      { name: 'THE CORNICE',  len: 130, turn:    0, grade: -0.14, w: 10.0, zone: 'snow',    grip: 0.46 },
+      { name: 'THE FACE',     len: 180, turn:  -45, grade: -0.30, w:  9.0, zone: 'snow',    grip: 0.42 },
+      { name: 'THE TRAVERSE', len: 240, turn:   90, grade: -0.10, w:  8.0, zone: 'snow',    grip: 0.40, bank: 8 },
+      { name: 'THE SERACS',   len: 160, turn:  -25, grade: -0.19, w:  7.5, zone: 'snow',    stairs: 3, stairH: 5.5 },
+      { name: 'THE TREELINE', len: 200, turn:   70, grade: -0.17, w:  6.5, zone: 'forest',  grip: 0.54 },
+      { name: 'THE GULLY',    len: 150, turn: -140, grade: -0.22, w:  6.0, zone: 'forest',  grip: 0.44, bank: 9 },
+      { name: 'THE HAMLET',   len: 170, turn:   55, grade: -0.12, w:  7.0, zone: 'village', grip: 0.52 },
+      { name: 'BLACK ICE',    len: 140, turn:  -60, grade: -0.16, w:  9.0, zone: 'snow',    grip: 0.26 },
+      { name: 'THE SHELF',    len: 130, turn:   35, grade: +0.04, w:  8.5, zone: 'snow',    grip: 0.44 },
+      { name: 'THE DRIFT',    len: 220, turn:  -95, grade: -0.15, w:  9.5, zone: 'snow',    grip: 0.42, bank: 7 },
+      { name: 'THE LAKE',     len: 260, turn:   45, grade: -0.04, w: 12.0, zone: 'shore',   grip: 0.30 },
+    ],
+    hazards: [
+      { s: 260, u: 2.4 },
+      { s: 470, u: -2.8 }, { s: 484, u: 0.8 },
+      { s: 760, u: 2.0 },
+      { s: 960, u: -1.6 }, { s: 974, u: 2.2 },
+      { s: 1200, u: -2.4 },
+      { s: 1420, u: 1.8 },
+      { s: 1660, u: -2.6 }, { s: 1674, u: 1.0 },
+      { s: 1880, u: 2.8 },
     ],
   },
 };
