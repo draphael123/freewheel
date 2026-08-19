@@ -1400,6 +1400,185 @@ function buildFurniture(tr) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* roadside furniture                                                         */
+/* -------------------------------------------------------------------------- */
+/* Scatter density alone could not fix "the track is still fairly bare", and the
+   snow sections proved it: white rocks on white ground add nothing. What empty
+   ground actually lacks is AUTHORED, MAN-MADE things at a regular rhythm —
+   they say the road was built and maintained by someone, and their spacing is
+   most of how you read speed.
+
+   So: snow poles where it is white, dry stone walls where it is farmed, rock
+   outcrops where it is bare, mooring bollards at the water, and a telegraph
+   line the whole way down to tie it together. All instanced, all keyed off the
+   zone, all skipped over tunnels, bridges and the sky road — none of which have
+   any ground to stand on. */
+function buildRoadside(tr) {
+  const q = new THREE.Quaternion(), mtx = new THREE.Matrix4();
+  const CAP = 700;
+  const mk = (geo, colour, cap = CAP, shadow = true) => {
+    const m = new THREE.InstancedMesh(geo,
+      new THREE.MeshLambertMaterial({ color: colour }), cap);
+    m.castShadow = shadow; m.receiveShadow = true;
+    return m;
+  };
+
+  /* Snow poles: a thin stake with a painted top. Against snow these are the
+     only thing with any value contrast, which is exactly why an alpine road
+     has them. */
+  const poleG = new THREE.BoxGeometry(0.12, 2.6, 0.12);
+  const snowPole = mk(poleG, 0x2c2f36, 420);
+  const snowTip = mk(new THREE.BoxGeometry(0.16, 0.5, 0.16), 0xc2452e, 420);
+
+  /* Dry stone: short random boxes laid end to end, so the wall has a top line
+     that wobbles rather than a extruded ribbon that does not. */
+  const stoneG = new THREE.BoxGeometry(1, 1, 1);
+  const stone = mk(stoneG, 0x8f8577, CAP);
+
+  /* Outcrops: bigger than the scatter rocks and angular, to break a bare slope
+     at a scale the scatter cannot reach. */
+  const cragG = new THREE.DodecahedronGeometry(1, 0);
+  const crag = mk(cragG, 0x6a6157, 300);
+
+  /* Bollards at the water. */
+  const bollard = mk(new THREE.CylinderGeometry(0.22, 0.28, 0.9, 8), 0x4a4740, 120);
+
+  /* The telegraph line. One pole every 34 m on the downhill side plus a wire
+     that sags between them: a vertical every second or so at racing speed, and
+     the strongest rhythm cue on the whole course. */
+  const tPole = mk(new THREE.BoxGeometry(0.24, 7.2, 0.24), 0x5b4a38, 200);
+  const tArm = mk(new THREE.BoxGeometry(1.5, 0.14, 0.14), 0x5b4a38, 200);
+  const wire = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 0.05, 0.05),
+    new THREE.MeshLambertMaterial({ color: 0x2b2822 }), 900);
+
+  let nSP = 0, nSt = 0, nCr = 0, nBo = 0, nTP = 0, nW = 0;
+  const XAX = new THREE.Vector3(1, 0, 0);
+  const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3();
+
+  const basisQ = (s0) => {
+    const { nrm, tan } = basisAt(s0);
+    q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      new THREE.Vector3().crossVectors(nrm, tan).normalize(), nrm,
+      tan.clone().normalize()));
+    return q;
+  };
+  const buildable = (s0) =>
+    !T.tunnelAt(s0) && !T.bridgeAt(s0) && !T.skyroadAt(s0);
+
+  /* Deterministic jitter. Math.random() here would reshuffle the whole roadside
+     on every rebuild, and the course is rebuilt whenever the route changes. */
+  const rnd = (i) => {
+    const x = Math.sin(i * 12.9898) * 43758.5453;
+    return x - Math.floor(x);
+  };
+
+  /* ---- zone furniture ---------------------------------------------------- */
+  let k = 0;
+  for (let s0 = 6; s0 < T.LENGTH - 6; s0 += 3) {
+    k++;
+    if (!buildable(s0)) continue;
+    const zone = T.zoneAt(s0);
+    const edge = T.halfWAt(s0) + T.VERGE;
+    basisQ(s0);
+
+    if (zone === 'snow' && k % 4 === 0) {
+      /* Both sides, so the corridor is legible where the ground is not. */
+      for (const side of [-1, 1]) {
+        if (nSP >= 420) break;
+        const c = v3(T.surfaceAt(s0, side * (edge + 1.5)));
+        mtx.compose(new THREE.Vector3(c.x, c.y + 1.3, c.z), q, new THREE.Vector3(1, 1, 1));
+        snowPole.setMatrixAt(nSP, mtx);
+        mtx.compose(new THREE.Vector3(c.x, c.y + 2.45, c.z), q, new THREE.Vector3(1, 1, 1));
+        snowTip.setMatrixAt(nSP, mtx);
+        nSP++;
+      }
+    }
+
+    if ((zone === 'farm' || zone === 'village') && k % 2 === 0) {
+      /* A field wall set back off the verge, following the road. */
+      const side = (Math.floor(s0 / 90) % 2) ? 1 : -1;
+      const off = edge + 7 + rnd(k) * 3;
+      const c = v3(T.surfaceAt(s0, side * off));
+      const gy = terrainY(tr, c.x, c.z);
+      if (nSt < CAP && Math.abs(gy - c.y) < 9) {
+        const h = 0.85 + rnd(k + 7) * 0.5;
+        mtx.compose(new THREE.Vector3(c.x, gy + h * 0.5, c.z), q,
+                    new THREE.Vector3(0.7 + rnd(k + 3) * 0.3, h, 3.1));
+        stone.setMatrixAt(nSt++, mtx);
+      }
+    }
+
+    if ((zone === 'rock' || zone === 'snow') && k % 5 === 0) {
+      const side = rnd(k + 11) > 0.5 ? 1 : -1;
+      const off = edge + 6 + rnd(k + 2) * 16;
+      const c = v3(T.surfaceAt(s0, side * off));
+      const gy = terrainY(tr, c.x, c.z);
+      if (nCr < 300) {
+        const r = 1.4 + rnd(k + 5) * 2.6;
+        mtx.compose(new THREE.Vector3(c.x, gy + r * 0.45, c.z),
+                    new THREE.Quaternion().setFromEuler(
+                      new THREE.Euler(rnd(k) * 0.6, rnd(k + 1) * 6.2, rnd(k + 2) * 0.6)),
+                    new THREE.Vector3(r, r * 0.8, r));
+        crag.setMatrixAt(nCr++, mtx);
+      }
+    }
+
+    if (zone === 'shore' && k % 6 === 0) {
+      for (const side of [-1, 1]) {
+        if (nBo >= 120) break;
+        const c = v3(T.surfaceAt(s0, side * (edge + 2.2)));
+        mtx.compose(new THREE.Vector3(c.x, c.y + 0.45, c.z), q, new THREE.Vector3(1, 1, 1));
+        bollard.setMatrixAt(nBo++, mtx);
+      }
+    }
+  }
+
+  /* ---- the telegraph line ------------------------------------------------ */
+  const SPAN = 34, ARM = 6.4;
+  const topAt = (s0, out) => {
+    const c = v3(T.surfaceAt(s0, -(T.halfWAt(s0) + T.VERGE + 3.4)));
+    return out.set(c.x, c.y + ARM, c.z);
+  };
+  for (let s0 = 20; s0 < T.LENGTH - SPAN - 20; s0 += SPAN) {
+    if (!buildable(s0)) continue;
+    basisQ(s0);
+    const c = v3(T.surfaceAt(s0, -(T.halfWAt(s0) + T.VERGE + 3.4)));
+    const gy = Math.min(c.y, terrainY(tr, c.x, c.z));
+    const h = Math.max(5.0, c.y + ARM - gy);
+    if (nTP < 200) {
+      mtx.compose(new THREE.Vector3(c.x, c.y + ARM - h * 0.5, c.z), q,
+                  new THREE.Vector3(1, h / 7.2, 1));
+      tPole.setMatrixAt(nTP, mtx);
+      mtx.compose(new THREE.Vector3(c.x, c.y + ARM - 0.35, c.z), q, new THREE.Vector3(1, 1, 1));
+      tArm.setMatrixAt(nTP, mtx);
+      nTP++;
+    }
+    /* Wire, in four sagging pieces, but only if the NEXT pole is buildable too
+       — otherwise it strings across a tunnel mouth to nothing. */
+    if (!buildable(s0 + SPAN)) continue;
+    for (let seg = 0; seg < 4; seg++) {
+      if (nW >= 900) break;
+      const t0 = seg / 4, t1 = (seg + 1) / 4;
+      const sag = (t) => 1.15 * Math.sin(Math.PI * t);
+      topAt(s0 + t0 * SPAN, _a); _a.y -= 0.35 + sag(t0);
+      topAt(s0 + t1 * SPAN, _b); _b.y -= 0.35 + sag(t1);
+      _d.subVectors(_b, _a);
+      const len = _d.length();
+      const wq = new THREE.Quaternion().setFromUnitVectors(XAX, _d.clone().normalize());
+      mtx.compose(_a.clone().addScaledVector(_d, 0.5), wq, new THREE.Vector3(len, 1, 1));
+      wire.setMatrixAt(nW++, mtx);
+    }
+  }
+
+  for (const [m, n] of [[snowPole, nSP], [snowTip, nSP], [stone, nSt], [crag, nCr],
+                        [bollard, nBo], [tPole, nTP], [tArm, nTP], [wire, nW]]) {
+    m.count = n;
+    if (n) courseRoot.add(m);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* the roads you did not take                                                 */
 /* -------------------------------------------------------------------------- */
 /* Without these the fork is a menu and nothing else — you would never see the
@@ -2173,6 +2352,7 @@ export function build() {
   buildSetPieces(tr);
   buildGhostRoads(closedRoads);
   buildFurniture(tr);
+  buildRoadside(tr);
   buildCloudDeck();
   buildHalls();
   buildTerraces(tr);
