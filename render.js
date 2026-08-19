@@ -133,8 +133,12 @@ function buildRoad(tr) {
        tone mapping both were simply white. The road must be the darkest large
        shape on the hill in every altitude band, because it is the one shape
        the player has to read. */
+    /* Patchy tarmac. One flat colour over two kilometres of road is the single
+       biggest reason it read as untextured; two octaves of noise on the
+       vertex colour costs nothing and gives it repairs and wear. */
     const RT = TH.road.top, RW = TH.road.wall;
-    for (let k = 0; k < 2; k++) plain.push(RT[0], RT[1], RT[2]);
+    const wear = 1 + fbm(s / 26, 0) * 0.30 + fbm(s / 6.5, 11.7) * 0.14;
+    for (let k = 0; k < 2; k++) plain.push(RT[0] * wear, RT[1] * wear, RT[2] * wear);
     for (let k = 0; k < 2; k++) plain.push(RW[0], RW[1], RW[2]);
 
     /* Slope tint: warm where the road falls away, cool where it climbs. This
@@ -360,12 +364,20 @@ function buildTerrain() {
       const dz = (gi(i, j + 1) - gi(i, j - 1)) / (2 * CELL);
       const slope = Math.hypot(dx, dz);
 
+      /* Fake ambient occlusion: compare each vertex with the mean of its
+         neighbours. Sitting below them means it is in a hollow, which is where
+         light does not reach. Two lines, and it is most of what separates a
+         lit scene from a field of flat polygons. */
+      const mean = (gi(i + 1, j) + gi(i - 1, j) + gi(i, j + 1) + gi(i, j - 1)
+                  + gi(i + 1, j + 1) + gi(i - 1, j - 1)) / 6;
+      const ao = 1 - Math.max(0, Math.min(0.42, (mean - y) * 0.055));
+
       const base = zoneCol[nearest[j * (nx + 1) + i]];
       const t = Math.max(0, Math.min(1, (slope - 0.62) / 0.55));
       const rk = t * t * (3 - 2 * t);
       /* Two scales of variation: fine per-vertex grain, plus a broad drift so
          the hillside has weather in it rather than one flat albedo. */
-      const sh = 0.86 + h2(i, j) * 0.16 + fbm(x / 90, z / 90) * TH.terrain.tint;
+      const sh = (0.86 + h2(i, j) * 0.16 + fbm(x / 90, z / 90) * TH.terrain.tint) * ao;
       col.push((base[0] + (ROCK[0] - base[0]) * rk) * sh,
                (base[1] + (ROCK[1] - base[1]) * rk) * sh,
                (base[2] + (ROCK[2] - base[2]) * rk) * sh);
@@ -482,7 +494,7 @@ function buildProps(tr) {
   const tm = new THREE.MeshLambertMaterial({ color: SC.trunk });
   const rm = new THREE.MeshLambertMaterial({ color: SC.rockCol, flatShading: true });
 
-  const N = SC.trees, NR = SC.rocks;
+  const N = Math.round(SC.trees * 1.35), NR = SC.rocks;
   const ci = new THREE.InstancedMesh(cone, cm, N);
   const ci2 = new THREE.InstancedMesh(cone2, cm2, N);
   const ti = new THREE.InstancedMesh(trunk, tm, N);
@@ -499,7 +511,10 @@ function buildProps(tr) {
   let a = 0, b = 0, rk = 0, guard = 0;
   while ((a + b < N || rk < NR) && guard++ < N * 40) {
     const s = Math.random() * T.LENGTH;
-    const off = (T.HALF_W + 6) + Math.random() * 62;
+    /* Closer in, and biased toward the road. Scattering from 15 m out to 77 m
+       put most of the wood outside a 60 m frame, so a pinewood with a thousand
+       trees in it rendered as empty ground. */
+    const off = (T.halfWAt(s) + SHOULDER + 2.5) + Math.pow(Math.random(), 1.7) * 42;
     const side = Math.random() < 0.5 ? -1 : 1;
     const c = T.surfaceAt(s, side * off);
     const gy = terrainY(tr, c.x, c.z);
@@ -666,6 +681,80 @@ function buildTunnels() {
    which is why 55 mph read as a stroll no matter what the number said. Gantries
    pass directly overhead, bunting runs a metre off your shoulder, and bales sit
    on the road itself. */
+function buildBarriers() {
+  /* A CONTINUOUS rail down both verges. Sparse posts left the road edge as a
+     dotted suggestion; an unbroken line at knee height reads as a boundary from
+     any distance, gives the whole course a silhouette, and puts something solid
+     a metre off your shoulder for the entire run. */
+  const H = 0.95, TH_ = 0.22;
+  const pos = [], col = [], idx = [];
+  const rail = new THREE.Color(TH.rail), dim = rail.clone().multiplyScalar(0.62);
+  let v = 0;
+  for (const side of [-1, 1]) {
+    let first = true;
+    for (let s0 = 2; s0 <= T.LENGTH - 2; s0 += 2.5) {
+      if (T.tunnelAt(s0)) { first = true; continue; }
+      const { right, nrm } = basisAt(s0);
+      const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER * 0.72)));
+      const lo = c.clone().addScaledVector(nrm, H - TH_);
+      const hi = c.clone().addScaledVector(nrm, H);
+      const out = right.clone().multiplyScalar(side * 0.09);
+      for (const p of [lo.clone().add(out), hi.clone().add(out), hi.clone().sub(out)]) {
+        pos.push(p.x, p.y, p.z);
+      }
+      col.push(dim.r, dim.g, dim.b, rail.r, rail.g, rail.b, rail.r, rail.g, rail.b);
+      if (!first) {
+        const q = v - 3;
+        idx.push(q, q + 1, v, q + 1, v + 1, v);        // outer face
+        idx.push(q + 1, q + 2, v + 1, q + 2, v + 2, v + 1); // top
+      }
+      first = false;
+      v += 3;
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
+    vertexColors: true, side: THREE.DoubleSide,
+  }));
+  m.castShadow = true;
+  courseRoot.add(m);
+}
+
+/* Rubber laid down where everyone brakes and slides. Two dark streaks into
+   every real corner — free, and it tells you a corner has been taken hard
+   before you arrive at it. */
+function buildMarks() {
+  const pos = [], idx = [];
+  let v = 0;
+  for (let s0 = 6; s0 < T.LENGTH - 8; s0 += 3) {
+    const kh = T.khAt(s0 + 1.5);
+    if (Math.abs(kh) < 0.014) continue;
+    const lean = -Math.sign(kh) * T.halfWAt(s0) * 0.34;
+    for (const lane of [lean - 0.85, lean + 0.85]) {
+      const base = v;
+      for (const s of [s0, s0 + 3]) {
+        const { right, nrm } = basisAt(s);
+        const c = v3(T.surfaceAt(s, lane)).addScaledVector(nrm, 0.035);
+        pos.push(...c.clone().addScaledVector(right, -0.22).toArray());
+        pos.push(...c.clone().addScaledVector(right, 0.22).toArray());
+      }
+      idx.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+      v += 4;
+    }
+  }
+  if (!idx.length) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  courseRoot.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+    color: 0x000000, transparent: true, opacity: 0.22, depthWrite: false,
+  })));
+}
+
 function buildFurniture(tr) {
   const q = new THREE.Quaternion(), mtx = new THREE.Matrix4();
 
@@ -719,6 +808,65 @@ function buildFurniture(tr) {
     courseRoot.add(beam, banner);
   }
 
+  /* ---- corner warning signs ---------------------------------------------- */
+  /* Placed where a corner is genuinely tight, far enough back to be read. They
+     are scenery and they are also the only thing on the course that warns you
+     about a corner before the corner. */
+  const signPost = new THREE.MeshLambertMaterial({ color: 0x6f6a62 });
+  const signFace = new THREE.MeshLambertMaterial({
+    color: 0xe8c34a, side: THREE.DoubleSide,
+  });
+  const signBack = new THREE.MeshLambertMaterial({ color: 0x2b2926 });
+  for (let s0 = 60; s0 < T.LENGTH - 40; s0 += 6) {
+    const kh = T.khAt(s0 + 34);
+    if (Math.abs(kh) < 0.024) continue;
+    if (T.tunnelAt(s0)) continue;
+    if (Math.abs(T.khAt(s0 - 6 + 34)) >= 0.024) continue;   // only the first
+    const { nrm, right, tan } = basisAt(s0);
+    const side = Math.sign(kh) || 1;                         // outside of the bend
+    const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER + 1.4)));
+    const B = new THREE.Matrix4().makeBasis(
+      new THREE.Vector3().crossVectors(nrm, tan).normalize(), nrm,
+      tan.clone().normalize());
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, 2.4, 0.16), signPost);
+    post.position.copy(c).addScaledVector(nrm, 1.2);
+    post.castShadow = true;
+    const plate = new THREE.Mesh(new THREE.PlaneGeometry(1.3, 1.3), signFace);
+    plate.position.copy(c).addScaledVector(nrm, 2.6);
+    plate.quaternion.setFromRotationMatrix(B);
+    plate.rotation.z += Math.PI / 4;                         // a diamond
+    const chev = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.22), signBack);
+    chev.position.copy(c).addScaledVector(nrm, 2.6).addScaledVector(tan, 0.04);
+    chev.quaternion.setFromRotationMatrix(B);
+    chev.rotation.z += side * 0.5;
+    courseRoot.add(post, plate, chev);
+  }
+
+  /* ---- spectators --------------------------------------------------------- */
+  /* Behind the rail, in the zones people would actually stand in. Nothing
+     expensive: a coloured capsule reads as a person at this distance, and a
+     crowd is the difference between a road and an event. */
+  const crowdG = new THREE.CapsuleGeometry(0.22, 0.62, 3, 6);
+  const crowdCols = [0xc2452e, 0x2f6f9e, 0xd9a13a, 0x4d7f6a, 0x7a4f9c, 0xe0d6c2];
+  const crowds = crowdCols.map((c) => new THREE.InstancedMesh(crowdG,
+    new THREE.MeshLambertMaterial({ color: c }), 120));
+  crowds.forEach((m) => { m.castShadow = true; });
+  const cn = crowdCols.map(() => 0);
+  for (let s0 = 12; s0 < T.LENGTH - 12; s0 += 2.2) {
+    const Z = TH.zones[T.zoneAt(s0)] || TH.zones.forest;
+    const want = Math.min(1, Z.blds * 0.30 + 0.05);
+    if (Math.random() > want || T.tunnelAt(s0)) continue;
+    const { nrm } = basisAt(s0);
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER + 1.1 + Math.random() * 2.4)));
+    const k = Math.floor(Math.random() * crowdCols.length);
+    if (cn[k] >= 120) continue;
+    mtx.compose(c.addScaledVector(nrm, 0.55), q.identity(),
+                new THREE.Vector3(1, 0.9 + Math.random() * 0.3, 1));
+    crowds[k].setMatrixAt(cn[k]++, mtx);
+  }
+  crowds.forEach((m, k) => { m.count = cn[k]; if (cn[k]) courseRoot.add(m); });
+
   /* ---- bunting: cheap, dense, and always within a metre of the verge ------ */
   const flagG = new THREE.PlaneGeometry(0.9, 0.62);
   const flags = new THREE.InstancedMesh(flagG,
@@ -768,6 +916,17 @@ function buildSky() {
       const t = Math.min(1, -v.y / 0.35);
       c = [0, 1, 2].map((k) => HOR[k] + (GND[k] - HOR[k]) * t);
     }
+    /* Clouds, painted straight into the dome. Banded by height and broken up
+       by noise, so they read as weather rather than as a gradient — and they
+       cannot pop, drift or cost a draw call. */
+    if (v.y > 0.04) {
+      const band = Math.max(0, 1 - Math.abs(v.y - 0.30) / 0.30);
+      const f = fbm(v.x * 3.4 + 9.1, v.z * 3.4 - 4.3)
+              + fbm(v.x * 9.0, v.z * 9.0) * 0.45;
+      const cloud = Math.max(0, Math.min(1, (f + 0.22) * 2.4)) * band;
+      c = [0, 1, 2].map((k) => c[k] + (0.92 - c[k]) * cloud * 0.72);
+    }
+
     const glow = Math.pow(Math.max(0, v.dot(SUN_DIR)), TH.sky.glowPow) * 1.1;
     col[i * 3]     = c[0] + glow * TH.sky.glow[0];
     col[i * 3 + 1] = c[1] + glow * TH.sky.glow[1];
@@ -1047,6 +1206,8 @@ export function build() {
   buildRoad(tr);
   buildCentreLine();
   buildProps(tr);
+  buildBarriers();
+  buildMarks();
   buildFurniture(tr);
 
   /* Rebuild the cart rather than reaching into it to repaint. The old code

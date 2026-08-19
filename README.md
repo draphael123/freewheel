@@ -77,6 +77,24 @@ Three of those are places rather than corners: **THE SPAN** refuses the terrain
 carve so the ground drops away and the road is a bridge, **THE ADIT** is a
 tunnel, and **THE VILLAGE** is a street with houses hard against both verges.
 
+## The look
+
+Everything here is derived from the centreline, so it costs nothing per course:
+
+- **Guard rails** run unbroken down both verges. Sparse posts left the road edge
+  as a dotted suggestion; a continuous line at knee height reads as a boundary
+  from any distance and puts something solid a metre off your shoulder.
+- **Kerbs** in red and white on every real corner, **skid marks** laid into them,
+  and two octaves of noise on the road's vertex colour so the tarmac has repairs
+  and wear rather than one flat grey over two kilometres.
+- **Fake ambient occlusion**: each terrain vertex is compared with the mean of
+  its neighbours, and sitting below them means it is in a hollow. Two lines, and
+  it is most of what separates a lit scene from a field of flat polygons.
+- **Corner warning signs** placed far enough back to be read — scenery, and also
+  the only thing that warns you about a corner before the corner.
+- **Spectators** behind the rail where people would actually stand, and clouds
+  painted straight into the sky dome so they cannot pop or cost a draw call.
+
 ## The road furniture
 
 Sense of speed comes from **proximity**, and an open hillside has nothing near

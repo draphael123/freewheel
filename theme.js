@@ -25,7 +25,7 @@ export const THEMES = {
 
     road: { top: [0.115, 0.105, 0.098], wall: [0.150, 0.120, 0.090] },
     dash: 0xcfc4ab, dashOn: true,
-    post: { a: 0xd8d2c4, b: 0xc2452e }, pylon: 0x6b5c4c,
+    post: { a: 0xd8d2c4, b: 0xc2452e }, pylon: 0x6b5c4c, rail: 0xb9b2a4,
 
     terrain: { rock: [.30, .27, .25], relief: 1.0, tint: 0.34 },
     /* Ground and scatter per ZONE. Colouring by altitude drifted; colouring by
@@ -66,7 +66,7 @@ export const THEMES = {
 
     road: { top: [0.19, 0.190, 0.185], wall: [0.12, 0.120, 0.117] },
     dash: 0xd6d0be, dashOn: true,
-    post: { a: 0xe0d29a, b: 0x33322e }, pylon: 0x8e887c,
+    post: { a: 0xe0d29a, b: 0x33322e }, pylon: 0x8e887c, rail: 0x8e8477,
 
     terrain: { rock: [.56, .53, .47], relief: 1.05, tint: 0.30 },
     zones: {
@@ -100,7 +100,7 @@ export const THEMES = {
 
     road: { top: [0.40, 0.47, 0.58], wall: [0.24, 0.29, 0.38] },
     dash: 0xf0a24a, dashOn: true,
-    post: { a: 0xf0a24a, b: 0x2a3550 }, pylon: 0x5d6675,
+    post: { a: 0xf0a24a, b: 0x2a3550 }, pylon: 0x5d6675, rail: 0x8d99ac,
 
     terrain: { rock: [.26, .28, .33], relief: 1.15, tint: 0.20 },
     zones: {
