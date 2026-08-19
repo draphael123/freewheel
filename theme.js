@@ -33,17 +33,22 @@ export const THEMES = {
     terrain: { rock: [.30, .27, .25], relief: 1.0, tint: 0.34 },
     /* Ground and scatter per ZONE. Colouring by altitude drifted; colouring by
        zone means the world changes where the course says it should. */
+    /* Daniel: "the track is still fairly bare". The reason was here and not in
+       the scatter system: FARM, VILLAGE, SNOW and SHORE are most of the course
+       by distance and all four were tuned to almost nothing, so the stretches
+       between the named set pieces were empty ground. Roughly tripled, with
+       rocks doing the work where trees would be wrong. */
     zones: {
-      snow:    { ground: [.74, .77, .83], trees: 0.00, rocks: 0.8, blds: 0.0 },
-      forest:  { ground: [.19, .30, .20], trees: 1.60, rocks: 0.3, blds: 0.0 },
-      rock:    { ground: [.37, .35, .32], trees: 0.15, rocks: 2.0, blds: 0.0 },
-      farm:    { ground: [.53, .45, .23], trees: 0.30, rocks: 0.2, blds: 0.5 },
-      village: { ground: [.36, .35, .31], trees: 0.18, rocks: 0.1, blds: 2.4 },
-      shore:   { ground: [.47, .47, .45], trees: 0.10, rocks: 0.7, blds: 0.9 },
+      snow:    { ground: [.74, .77, .83], trees: 0.10, rocks: 2.2, blds: 0.0 },
+      forest:  { ground: [.19, .30, .20], trees: 2.10, rocks: 0.5, blds: 0.0 },
+      rock:    { ground: [.37, .35, .32], trees: 0.30, rocks: 2.6, blds: 0.0 },
+      farm:    { ground: [.53, .45, .23], trees: 1.05, rocks: 0.9, blds: 0.5 },
+      village: { ground: [.36, .35, .31], trees: 0.62, rocks: 0.5, blds: 2.4 },
+      shore:   { ground: [.47, .47, .45], trees: 0.45, rocks: 1.9, blds: 0.9 },
     },
     bld: [0xcfc3ad, 0xb9a88e, 0x9c8b74, 0x8a6f56], roof: 0x7a3a2c,
     scatter: {
-      trees: 820, rocks: 190, clump: 0.36, altHi: 0.80, altLo: 0.14,
+      trees: 1500, rocks: 620, clump: 0.36, altHi: 0.80, altLo: 0.14,
       coneA: 0x4d6b47, coneB: 0x63794f, trunk: 0x5a4634, rockCol: 0x6d6459,
       tallH: 7.5, tallR: 2.2, shortH: 5.2, shortR: 2.9,
     },

@@ -268,13 +268,30 @@ function drawRoute() {
     });
   });
 
-  const dead = SEASON.impassable(forks);
-  el('rGo').textContent = dead ? 'there is no way down' : 'take the load down';
-  el('rGo').disabled = dead;
+  /* When the season is over the board must offer a way FORWARD. It used to
+     disable the button and leave "give up the season" as the only live control,
+     which is a dead end worded as a failure — and you hit it at the end of
+     every single season. */
+  const dead = SEASON.impassable(forks) || st.done;
+  el('rGo').textContent = dead ? 'open a new season' : 'take the load down';
+  el('rGo').disabled = false;
+  el('rClosed').innerHTML = dead
+    ? (SEASON.impassable(forks)
+        ? `The road is finished. ${st.points} points this season.`
+        : `Season over. ${st.points} points.`)
+    : el('rClosed').innerHTML;
 }
 
 el('rGo').addEventListener('click', () => {
-  if (SEASON.impassable(T.forksOf(seasonCourse))) return;
+  const forks = T.forksOf(seasonCourse);
+  const st = SEASON.state();
+  if (SEASON.impassable(forks) || (st && st.done)) {
+    SEASON.reset(seasonCourse, forks);
+    pickedRoute = T.defaultRoute(seasonCourse);
+    lastClosed = [];
+    drawRoute();
+    return;
+  }
   startRun(seasonCourse, pickedRoute);
 });
 el('rSet').addEventListener('click', () => show('settings'));

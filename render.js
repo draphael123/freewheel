@@ -689,37 +689,53 @@ function buildBuildings(tr, mtx, q) {
       if (Math.random() > Z.blds * 0.55) continue;
       const k = Math.floor(Math.random() * cols.length);
       if (n[k] >= CAP) continue;
-      const w = 4.4 + Math.random() * 3.2;               // across the street
-      const d = 5.0 + Math.random() * 3.5;               // along it
-      const h = 4.0 + Math.random() * 5.0;
-      const off = T.halfWAt(s0) + SHOULDER + 1.4 + w * 0.5 + Math.random() * 3.5;
+      /* A HOUSE and its FOUNDATION are two different objects.
+
+         They used to be one stretched box: the wall ran from whatever the
+         terrain was up to street level, so on a slope a house became a tower
+         with a small roof perched on it, windows only near the top, and no two
+         houses the same shape. Daniel's words were "clunky" and "inconsistent
+         geometry", and that is exactly what it was.
+
+         Now the house has FIXED proportions and always sits on the street, and
+         a separate plain foundation reaches down to whatever the ground is
+         doing. That is how a hill village is actually built, and it means every
+         house reads as a house however steep the ground. */
+      const w = 4.6 + Math.random() * 2.6;               // across the street
+      const d = 5.4 + Math.random() * 2.8;               // along it
+      const h = 4.6 + Math.random() * 2.4;               // house only, not the made ground
+
+      /* A consistent setback per side. Random offsets of up to 3.5 m made the
+         village a jumble rather than a street, and put neighbouring roofs at
+         depths where they could still overlap. */
+      const off = T.halfWAt(s0) + SHOULDER + 1.6 + w * 0.5 + (side > 0 ? 0.9 : 0.4);
       const c = T.surfaceAt(s0, side * off);
       const gy = terrainY(tr, c.x, c.z);
-      /* Stand them UP from the slope. Sitting every house on raw terrain put
-         the village ten metres below an embanked road, where the embankment
-         hid it — and made-up ground against the street is how hill villages
-         are actually built. */
-      /* Found on the GROUND, presented at street level. Standing a fixed-height
-         box on max(terrain, street-2.5) left every house on the low side of an
-         embankment hanging in mid-air — the terrain beside the road is commonly
-         ten metres down. Instead: the top sits just below the street, the base
-         digs into whatever is actually under it, and the wall stretches to
-         cover the difference. That is a retaining wall, which is exactly what
-         a hill village is built on. */
-      const topY = Math.max(gy, c.y - 2.2) + h;
-      const botY = Math.min(gy, topY - h) - 0.8;
-      const H = topY - botY;
-      const mid = new THREE.Vector3(c.x, (topY + botY) / 2, c.z);
+
+      const baseY = c.y - 0.35;                          // doorstep, on the street
+      const topY = baseY + h;
+      const mid = new THREE.Vector3(c.x, baseY + h * 0.5, c.z);
       const top = new THREE.Vector3(c.x, topY, c.z);
-      mtx.compose(mid, q, new THREE.Vector3(w, H, d));
+      mtx.compose(mid, q, new THREE.Vector3(w, h, d));
       walls[k].setMatrixAt(n[k]++, mtx);
-      /* Sit the plinth on the BASE of the wall. It used to be placed relative
-         to the nominal house height h rather than the actual stretched height
-         H, so anywhere the ground fell away it floated in a band across the
-         middle of the wall. */
-      mtx.compose(new THREE.Vector3(c.x, botY + Math.min(1.4, H) * 0.5, c.z),
-                  q, new THREE.Vector3(w * 1.06, Math.min(1.4, H), d * 1.06));
-      plinths.setMatrixAt(nr, mtx);
+
+      /* Made ground under it, only where the hill has fallen away. Slightly
+         proud of the house so it reads as a retaining wall rather than as the
+         same building continuing. */
+      const drop = baseY - gy;
+      if (drop > 0.4) {
+        mtx.compose(new THREE.Vector3(c.x, gy + drop * 0.5, c.z), q,
+                    new THREE.Vector3(w * 1.05, drop, d * 1.05));
+        plinths.setMatrixAt(nr, mtx);
+      } else {
+        /* Level ground still gets a low course of stone at the base. */
+        mtx.compose(new THREE.Vector3(c.x, baseY + 0.3, c.z), q,
+                    new THREE.Vector3(w * 1.05, 0.6, d * 1.05));
+        plinths.setMatrixAt(nr, mtx);
+      }
+
+      const H = h;                                       // windows sit on the HOUSE
+      const botY = baseY;
       mtx.compose(top, q, new THREE.Vector3(w * 1.07, w * 0.38, d * 1.04));
       roofs.setMatrixAt(nr++, mtx);
 
@@ -734,12 +750,12 @@ function buildBuildings(tr, mtx, q) {
       const out = right0.clone().normalize().multiplyScalar(-side);
       const along = tan0.clone().normalize();
       const faceX = w * 0.5 + 0.05;
-      const rows = H > 8.0 ? 2 : 1;
+      const rows = H > 6.2 ? 2 : 1;
       const wcols = d > 6.6 ? 2 : 1;
       for (let ry = 0; ry < rows; ry++) {
         for (let cx = 0; cx < wcols; cx++) {
           if (nw >= WCAP) break;
-          const wy = topY - 1.6 - ry * 2.7;
+          const wy = topY - 1.5 - ry * 2.4;
           if (wy - 0.7 < botY) continue;
           const dz = wcols === 1 ? 0 : (cx - 0.5) * d * 0.46;
           const pw = new THREE.Vector3(c.x, wy, c.z)
