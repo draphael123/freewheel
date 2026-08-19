@@ -40,7 +40,7 @@ export const setView = (v) => { view = VIEWS.includes(v) ? v : 'iso'; resize(); 
 export const getView = () => view;
 let sky, dust, dustP = [], shakeT = 0;
 let courseRoot, TH = THEME.get('alpine');
-let rivalCarts = [], tunnelRoofs = [];
+let rivalCarts = [], tunnelRoofs = [], cloudDecks = [];
 const hex = (c) => new THREE.Color(c[0], c[1], c[2]);
 let roadMesh, roadPlain, roadTint, pylons, postGroup, treeGroup;
 let camYaw = 0, camYawTarget = 0, camSize = 46;
@@ -294,13 +294,15 @@ function buildTerrain() {
          mountainside the road was cut into: it follows the descent but not the
          dips, crests or the step, so the road deviates from it and the pylons
          have something to stand on. */
-      let wsum = 0, ysum = 0, bsum = 0, near = 1e9, nearY = 0, nearI = 0;
+      let wsum = 0, ysum = 0, bsum = 0, ssum = 0, near = 1e9, nearY = 0, nearI = 0;
       for (let ci = 0; ci < coarse.length; ci++) {
         const p = coarse[ci];
         const d2 = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
         if (d2 < near) { near = d2; nearY = p.y; nearI = ci; }
         const w = Math.exp(-d2 / SIG2);
-        wsum += w; ysum += w * p.y; if (p.bridge) bsum += w;
+        wsum += w; ysum += w * p.y;
+        if (p.bridge) bsum += w;
+        if (p.skyroad) ssum += w;
       }
       const d = Math.sqrt(near);
       /* Relief grows with distance from the road: graded verges close in,
@@ -337,8 +339,14 @@ function buildTerrain() {
          course doubles back enough that it did so constantly — the hillside
          grew a row of giant vertical slabs. Weight it like the height. */
       const gorge = bsum / wsum;
+      /* The cloud deck: the ground does not merely fall away, it leaves. Same
+         smooth weighting as the gorge so there is no cliff where the field
+         changes. */
+      const sky = ssum / wsum;
       heights[j * (nx + 1) + i] =
-        Math.min(smooth, cut) - gorge * (26 + Math.min(d * 0.45, 22));
+        Math.min(smooth, cut)
+        - gorge * (26 + Math.min(d * 0.45, 22))
+        - sky * (120 + Math.min(d * 0.8, 60));
       bandY[j * (nx + 1) + i] = nearY;
       nearest[j * (nx + 1) + i] = nearI;
     }
@@ -635,14 +643,24 @@ function buildBuildings(tr, mtx, q) {
          the village ten metres below an embanked road, where the embankment
          hid it — and made-up ground against the street is how hill villages
          are actually built. */
-      const base = new THREE.Vector3(c.x, Math.max(gy, c.y - 2.5), c.z);
-      mtx.compose(base.clone().addScaledVector(nrm, h / 2), q, new THREE.Vector3(w, h, d));
+      /* Found on the GROUND, presented at street level. Standing a fixed-height
+         box on max(terrain, street-2.5) left every house on the low side of an
+         embankment hanging in mid-air — the terrain beside the road is commonly
+         ten metres down. Instead: the top sits just below the street, the base
+         digs into whatever is actually under it, and the wall stretches to
+         cover the difference. That is a retaining wall, which is exactly what
+         a hill village is built on. */
+      const topY = Math.max(gy, c.y - 2.2) + h;
+      const botY = Math.min(gy, topY - h) - 0.8;
+      const H = topY - botY;
+      const mid = new THREE.Vector3(c.x, (topY + botY) / 2, c.z);
+      const top = new THREE.Vector3(c.x, topY, c.z);
+      mtx.compose(mid, q, new THREE.Vector3(w, H, d));
       walls[k].setMatrixAt(n[k]++, mtx);
-      mtx.compose(base.clone().addScaledVector(nrm, 0.55), q,
-                  new THREE.Vector3(w * 1.06, 1.1, d * 1.06));
+      mtx.compose(new THREE.Vector3(c.x, botY + (topY - botY) * 0.5 - h * 0.5 + 0.55, c.z),
+                  q, new THREE.Vector3(w * 1.06, Math.min(1.4, H), d * 1.06));
       plinths.setMatrixAt(nr, mtx);
-      mtx.compose(base.clone().addScaledVector(nrm, h), q,
-                  new THREE.Vector3(w * 1.14, w * 0.42, d * 1.06));
+      mtx.compose(top, q, new THREE.Vector3(w * 1.14, w * 0.42, d * 1.06));
       roofs.setMatrixAt(nr++, mtx);
       nextFree[side] = s0 + d + 1.2 + Math.random() * 2.5;
     }
@@ -650,6 +668,100 @@ function buildBuildings(tr, mtx, q) {
   walls.forEach((w, k) => { w.count = n[k]; courseRoot.add(w); });
   roofs.count = nr; plinths.count = nr;
   courseRoot.add(roofs, plinths);
+}
+
+/* A deck of cloud just below a stretch of road with nothing under it. Two
+   translucent layers drifting at different rates, so it reads as weather you
+   are above rather than as a grey floor. */
+function buildCloudDeck() {
+  cloudDecks = [];
+  let run = null;
+  const flush = () => {
+    if (!run || run.b - run.a < 20) { run = null; return; }
+    const mid = (run.a + run.b) / 2;
+    const c = v3(T.surfaceAt(mid, 0));
+    for (let layer = 0; layer < 2; layer++) {
+      const g = new THREE.PlaneGeometry(420, 420, 1, 1);
+      g.rotateX(-Math.PI / 2);
+      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
+        color: 0xf2f4f8, transparent: true, opacity: layer ? 0.55 : 0.82,
+        depthWrite: false, side: THREE.DoubleSide, fog: true,
+      }));
+      m.position.set(c.x, c.y - 7 - layer * 9, c.z);
+      m.renderOrder = 1 + layer;
+      courseRoot.add(m);
+      cloudDecks.push({ mesh: m, drift: (layer ? 1 : -1) * (1.4 + layer * 0.8) });
+    }
+    run = null;
+  };
+  for (let s0 = 0; s0 < T.LENGTH; s0 += 2) {
+    if (T.skyroadAt(s0)) { if (!run) run = { a: s0, b: s0 }; else run.b = s0; }
+    else flush();
+  }
+  flush();
+}
+
+/* A building the road runs straight through. Structurally a wider, taller
+   tunnel with a gable and a floor of daylight at each end, but it reads as a
+   place rather than as a hole in a hill. */
+function buildHalls() {
+  let run = null;
+  const wallM = new THREE.MeshLambertMaterial({ color: 0x6b5a44, side: THREE.DoubleSide });
+  const roofM = new THREE.MeshLambertMaterial({
+    color: TH.roof, side: THREE.DoubleSide, flatShading: true,
+  });
+  const flush = () => {
+    if (!run || run.b - run.a < 8) { run = null; return; }
+    const H = 8.2, OVER = 4.5;
+    const pos = [], idx = [], rpos = [], ridx = [];
+    let v = 0, rv = 0;
+    for (let s0 = run.a - 2; s0 <= run.b + 2; s0 += 3) {
+      const w = T.halfWAt(s0) + SHOULDER + OVER;
+      const { right, nrm } = basisAt(s0);
+      const c = v3(T.surfaceAt(s0, 0));
+      const L = c.clone().addScaledVector(right, -w);
+      const R = c.clone().addScaledVector(right, w);
+      const LT = L.clone().addScaledVector(nrm, H);
+      const RT = R.clone().addScaledVector(nrm, H);
+      const RIDGE = c.clone().addScaledVector(nrm, H + w * 0.42);
+      for (const p of [L, LT, RT, R]) pos.push(p.x, p.y, p.z);
+      for (const p of [LT, RIDGE, RT]) rpos.push(p.x, p.y, p.z);
+      if (v > 0) {
+        const q = v - 4;
+        for (const [a2, b2] of [[0, 1], [2, 3]]) {            // the two long walls
+          idx.push(q + a2, q + b2, v + a2, q + b2, v + b2, v + a2);
+        }
+        const r = rv - 3;
+        for (const [a2, b2] of [[0, 1], [1, 2]]) {            // the two roof slopes
+          ridx.push(r + a2, r + b2, rv + a2, r + b2, rv + b2, rv + a2);
+        }
+      }
+      v += 4; rv += 3;
+    }
+    const mk = (P, I, M) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+      g.setIndex(I);
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, M);
+      m.castShadow = true; m.receiveShadow = true;
+      courseRoot.add(m);
+      return m;
+    };
+    mk(pos, idx, wallM);
+    const roof = mk(rpos, ridx, roofM.clone());
+    roof.material.transparent = true;
+    roof.castShadow = false;
+    /* Same trick as the tunnel: on a camera fixed above the road, a roof hides
+       the road, the cart and every rival under it. */
+    tunnelRoofs.push({ mesh: roof, a: run.a, b: run.b });
+    run = null;
+  };
+  for (let s0 = 0; s0 < T.LENGTH; s0 += 2) {
+    if (T.hallAt(s0)) { if (!run) run = { a: s0, b: s0 }; else run.b = s0; }
+    else flush();
+  }
+  flush();
 }
 
 /* A roof over the road. The only place on the course where the sky goes away,
@@ -829,34 +941,44 @@ function buildSetPieces(tr) {
 }
 
 function buildBarriers() {
-  /* A CONTINUOUS rail down both verges. Sparse posts left the road edge as a
-     dotted suggestion; an unbroken line at knee height reads as a boundary from
-     any distance, gives the whole course a silhouette, and puts something solid
-     a metre off your shoulder for the entire run. */
-  const H = 0.95, TH_ = 0.22;
+  /* A SOLID parapet down both verges, not a ribbon. The first version was two
+     faces — an outer skin and a top — which is fine head-on and reads as a
+     sheet of paper the moment you can see along it. This has thickness, an
+     inner face you see from the road, and a post every few metres. */
+  const H = 1.05, TH_ = 0.34, POST = 4.5;
   const pos = [], col = [], idx = [];
-  const rail = new THREE.Color(TH.rail), dim = rail.clone().multiplyScalar(0.62);
+  const rail = new THREE.Color(TH.rail);
+  const face = rail.clone().multiplyScalar(0.70);
+  const under = rail.clone().multiplyScalar(0.45);
   let v = 0;
+  const postAt = [];
+
   for (const side of [-1, 1]) {
-    let first = true;
+    let first = true, sincePost = 99;
     for (let s0 = 2; s0 <= T.LENGTH - 2; s0 += 2.5) {
       if (T.tunnelAt(s0)) { first = true; continue; }
       const { right, nrm } = basisAt(s0);
-      const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER * 0.72)));
-      const lo = c.clone().addScaledVector(nrm, H - TH_);
-      const hi = c.clone().addScaledVector(nrm, H);
-      const out = right.clone().multiplyScalar(side * 0.09);
-      for (const p of [lo.clone().add(out), hi.clone().add(out), hi.clone().sub(out)]) {
-        pos.push(p.x, p.y, p.z);
-      }
-      col.push(dim.r, dim.g, dim.b, rail.r, rail.g, rail.b, rail.r, rail.g, rail.b);
+      const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER * 0.78)));
+      const out = right.clone().multiplyScalar(side * TH_ * 0.5);
+      /* Six vertices per ring: inner and outer, at foot and cap, plus the two
+         cap corners again so the top can be shaded separately. */
+      const iLo = c.clone().sub(out);
+      const oLo = c.clone().add(out);
+      const iHi = iLo.clone().addScaledVector(nrm, H);
+      const oHi = oLo.clone().addScaledVector(nrm, H);
+      for (const p of [iLo, iHi, oHi, oLo]) pos.push(p.x, p.y, p.z);
+      col.push(under.r, under.g, under.b, face.r, face.g, face.b,
+               rail.r, rail.g, rail.b, under.r, under.g, under.b);
       if (!first) {
-        const q = v - 3;
-        idx.push(q, q + 1, v, q + 1, v + 1, v);        // outer face
-        idx.push(q + 1, q + 2, v + 1, q + 2, v + 2, v + 1); // top
+        const q = v - 4;
+        for (const [i0, i1] of [[0, 1], [1, 2], [2, 3]]) {
+          idx.push(q + i0, q + i1, v + i0, q + i1, v + i1, v + i0);
+        }
       }
       first = false;
-      v += 3;
+      v += 4;
+      sincePost += 2.5;
+      if (sincePost >= POST) { sincePost = 0; postAt.push({ c, nrm, side }); }
     }
   }
   const g = new THREE.BufferGeometry();
@@ -867,8 +989,22 @@ function buildBarriers() {
   const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
     vertexColors: true, side: THREE.DoubleSide,
   }));
-  m.castShadow = true;
+  m.castShadow = true; m.receiveShadow = true;
   courseRoot.add(m);
+
+  const pg = new THREE.BoxGeometry(0.30, 1.25, 0.30);
+  const posts = new THREE.InstancedMesh(pg,
+    new THREE.MeshLambertMaterial({ color: new THREE.Color(TH.rail).multiplyScalar(0.55) }),
+    Math.max(1, postAt.length));
+  posts.castShadow = true;
+  const mtx = new THREE.Matrix4(), q0 = new THREE.Quaternion();
+  postAt.forEach((p, i) => {
+    mtx.compose(p.c.clone().addScaledVector(p.nrm, 0.60), q0,
+                new THREE.Vector3(1, 1, 1));
+    posts.setMatrixAt(i, mtx);
+  });
+  posts.count = postAt.length;
+  courseRoot.add(posts);
 }
 
 /* Rubber laid down where everyone brakes and slides. Two dark streaks into
@@ -1108,15 +1244,20 @@ function buildDust() {
 
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _z = new THREE.Vector3();
 function updateDust(S, dt, at, right) {
+  /* Grit off the wheels normally; a proper cloud of it when the tyres are
+     sliding, which is the other half of making a drift visible. */
+  const sliding = Math.abs(S.drift || 0) > 2.0;
   const emit = !S.air && S.v > 6;
-  let budget = emit ? Math.min(4, Math.floor(S.v * dt * 2.2)) : 0;
+  let budget = emit ? Math.min(sliding ? 9 : 4,
+    Math.ceil(S.v * dt * (sliding ? 7 : 2.2))) : 0;
+  dust.material.opacity = sliding ? 0.42 : 0.30;
   for (const d of dustP) {
     if (d.life <= 0 && budget > 0) {
       budget--;
-      d.life = 0.45 + Math.random() * 0.35;
+      d.life = (sliding ? 0.7 : 0.45) + Math.random() * 0.35;
       d.pos.copy(at).addScaledVector(right, (Math.random() - 0.5) * 2.0);
       d.vel.set((Math.random() - 0.5) * 1.6, 1.0 + Math.random() * 1.4, (Math.random() - 0.5) * 1.6);
-      d.sz = 0.5 + Math.random() * 0.9;
+      d.sz = (sliding ? 1.0 : 0.5) + Math.random() * 0.9;
     }
     if (d.life > 0) {
       d.life -= dt;
@@ -1206,6 +1347,32 @@ function makeCart(col) {
   }
   cart.userData.wheels = wheels;
 
+  /* Front wing, exhausts and a roundel. Small pieces, but they are what stops
+     a kart reading as a wedge with wheels — and the wing in particular gives
+     the nose a horizontal line to read the yaw against when it is sideways. */
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.11, 0.46),
+    new THREE.MeshPhongMaterial({ color: col.nose, shininess: 22, flatShading: true }));
+  wing.position.set(0, 0.30, 2.05); wing.castShadow = true;
+  G.add(wing);
+  for (const sx of [-0.62, 0.62]) {
+    const stay = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.26, 0.09), dark);
+    stay.position.set(sx, 0.40, 2.0);
+    G.add(stay);
+  }
+  const pipe = new THREE.CylinderGeometry(0.09, 0.11, 1.1, 6);
+  pipe.rotateX(Math.PI / 2);
+  for (const sx of [-0.42, 0.42]) {
+    const ex = new THREE.Mesh(pipe, new THREE.MeshPhongMaterial({
+      color: 0x9aa0a6, shininess: 60, specular: 0x555555 }));
+    ex.position.set(sx, 0.52, -1.65); ex.castShadow = true;
+    G.add(ex);
+  }
+  const roundel = new THREE.Mesh(new THREE.CircleGeometry(0.30, 14),
+    new THREE.MeshLambertMaterial({ color: 0xf0ead9, side: THREE.DoubleSide }));
+  roundel.position.set(0.78, 0.52, 0.15);
+  roundel.rotation.y = Math.PI / 2;
+  G.add(roundel);
+
   const rider = new THREE.Group();
   const torso = new THREE.Mesh(
     new THREE.CapsuleGeometry(0.30, 0.52, 3, 8),
@@ -1221,13 +1388,29 @@ function makeCart(col) {
   const visor = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.11, 0.22),
     new THREE.MeshLambertMaterial({ color: 0x14181f }));
   visor.position.set(0, 1.07, 0.20);
+  /* Arms forward to the wheel. Two boxes, and the rider stops looking like a
+     capsule someone left on the seat. */
+  const armM = new THREE.MeshLambertMaterial({ color: col.rider });
+  for (const sx of [-0.30, 0.30]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.66), armM);
+    arm.position.set(sx, 0.62, 0.34);
+    arm.rotation.x = -0.30;
+    arm.castShadow = true;
+    rider.add(arm);
+  }
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.045, 6, 12),
+    new THREE.MeshLambertMaterial({ color: 0x1c1e22 }));
+  wheel.position.set(0, 0.50, 0.62);
+  wheel.rotation.x = 1.15;
+  rider.add(wheel);
+
   rider.add(torso, shoulders, helmet, visor);
   rider.position.set(0, 0.50, -0.30);
   G.add(rider);
 
   scene.add(cart);
   cart.userData.rider = rider;
-  cart.userData.anim = { roll: 0, pitch: 0, spin: 0, susp: 0, prevV: 0, steer: 0 };
+  cart.userData.anim = { roll: 0, pitch: 0, yaw: 0, spin: 0, susp: 0, prevV: 0, steer: 0 };
   return cart;
 }
 
@@ -1360,6 +1543,8 @@ export function build() {
   buildMarks();
   buildSetPieces(tr);
   buildFurniture(tr);
+  buildCloudDeck();
+  buildHalls();
 
   /* Rebuild the cart rather than reaching into it to repaint. The old code
      poked cart.children[0].material, which stopped being a Mesh the moment the
@@ -1453,6 +1638,20 @@ function placeCart(group, St, dt) {
   A.wasAir = St.air;
   A.susp *= Math.max(0, 1 - dt * 6);
 
+  /* YAW INTO THE SLIDE. This is the whole reason a drift did not feel like
+     one: the cart slid sideways while remaining perfectly square to the road,
+     so the only evidence you were drifting was a meter. Point the nose at the
+     inside of the corner and the same physics reads as a drift. */
+  /* Sign matters and is easy to get backwards. Local +X is nrm x tan, which
+     points to the rider's LEFT, so a POSITIVE rotation.y swings the nose left.
+     Sliding right (vy > 0) should therefore yaw positive — nose into the
+     corner while the cart travels outward, which is the oversteer look. Nose
+     pointing along the path is what a gripping car does and reads as nothing. */
+  const slipAngle = Math.atan2(St.vy, Math.max(6, St.v));
+  A.yaw += (Math.max(-0.62, Math.min(0.62, slipAngle * 1.9)) - A.yaw)
+         * Math.min(1, dt * 9);
+
+  G.rotation.y = A.yaw;
   G.rotation.z = A.roll;
   G.rotation.x = A.pitch + (St.air ? -0.06 : 0);
   G.position.y = -A.susp;
@@ -1608,6 +1807,10 @@ export function frame(S, dt) {
   /* The dome rides with the view: an ortho camera has no perspective to sell
      distance, so a sky that stayed put would slide across the frame. */
   sky.position.copy(tgt);
+
+  for (const c of cloudDecks) {
+    c.mesh.position.x += c.drift * dt;         // slow drift, so it is weather
+  }
 
   /* Open the roof while the cart is under it, with a margin so it is already
      clear by the time you arrive. */

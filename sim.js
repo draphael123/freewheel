@@ -41,8 +41,10 @@ export const tune = {
      supply before the cart stops turning and starts sliding. */
   mu: 1.05,
   steerForce: 10.5,       // lateral accel a full lock asks for
-  slipDamp: 3.2,          // how hard the tyres fight a slide
-  handbrakeGrip: 0.38,    // grip multiplier while the handbrake is down
+  slipDamp: 2.1,          /* how hard the tyres fight a slide. At 3.2 a drift
+                             collapsed almost as soon as it started, so there was
+                             nothing to hold and nothing to feel. */
+  handbrakeGrip: 0.46,    // grip multiplier while the handbrake is down
   slipDrag: 0.55,         // speed scrubbed per m/s of sideways motion
   spinAt: 10.5,           /* sideways speed beyond which you have lost it. At 8
                              a driver who simply held the throttle spun through
@@ -54,8 +56,8 @@ export const tune = {
   /* Boost, charged by drifting. The risky thing is the fast thing. */
   boost: 6.2,             // m/s^2 while spending
   boostMax: 2.4,          // seconds it can hold
-  driftCharge: 0.62,      // seconds banked per second of a real slide
-  driftMin: 2.2,          // ...sideways speed that counts as one
+  driftCharge: 0.78,      // seconds banked per second of a real slide
+  driftMin: 2.0,          // ...sideways speed that counts as one
 
   baleLoss: 0.24,         // fraction of speed lost hitting a bale
   baleShove: 2.6,         // m/s of lateral shove away from it

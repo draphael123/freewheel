@@ -73,9 +73,11 @@ than drifting with altitude.
 THE SPAN · THE ESSES · THE ADIT · THE TERRACES · THE SWEEP · THE PINCH ·
 THE VILLAGE · THE STEPS · HAIRPIN R · THE QUAY`
 
-Three of those are places rather than corners: **THE SPAN** refuses the terrain
-carve so the ground drops away and the road is a bridge, **THE ADIT** is a
-tunnel, and **THE VILLAGE** is a street with houses hard against both verges.
+Several of those are places rather than corners: **THE SPAN** refuses the terrain
+carve so the ground drops away and the road is a bridge; **THE CLOUD DECK**
+removes the ground entirely and runs you over two drifting layers of cloud;
+**THE ADIT** is a tunnel; **THE MILL** is a building you drive straight through;
+and **THE VILLAGE** is a street with houses hard against both verges.
 
 ## Sound
 
@@ -213,6 +215,19 @@ Physics numbers came out of `FW.sim()`, not out of taste:
   that touched on the grid held each other at zero for the entire race, and the
   field report quietly averaged over the three that got away. Scale contact
   losses by speed, and make the harness name its non-finishers.
+- **A drift you cannot see is not a drift.** The cart slid sideways while
+  staying perfectly square to the road, so the only evidence was a meter. Yawing
+  the nose into the corner — plus a cloud of tyre smoke — turned the same physics
+  into something that reads. The sign is easy to get backwards: local +X is
+  `nrm × tan`, which points LEFT, so sliding right wants a POSITIVE yaw.
+- **A throw inside rAF stops the game forever.** A HUD element deleted during
+  the sound pass left `finish()` writing to `null`, which killed the loop — and
+  presented as "the game freezes when completing a track". The loop now catches
+  and logs rather than dying.
+- **Do not stand a fixed-height box on max(terrain, street).** The ground beside
+  the road is commonly ten metres below it, so every house on the low side hung
+  in mid-air. Found them on the ground and let the wall stretch: that is a
+  retaining wall, which is what a hill village is built on.
 - **Crashing has to cost more than braking.** With a cheap spin, a policy that
   never braked took nine barrier hits and two spins and still beat one that drove
   properly by three seconds — which makes the grip limit a decoration.

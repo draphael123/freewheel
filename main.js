@@ -283,7 +283,6 @@ function finish() {
   el('dgrid').textContent = `from ${ORD[S.grid] || S.grid} on the grid`;
   el('dtime').textContent = S.t.toFixed(2);
   el('dtop').textContent = Math.round(S.vMax * 2.2369);
-  el('dpump').textContent = S.cleanLandings;
   el('dair').textContent = S.airTotal.toFixed(1);
   el('dthrust').textContent = S.driftTime.toFixed(1) + 's';
   el('dcourse').textContent = T.TITLE;
@@ -306,6 +305,16 @@ let acc = 0, last = performance.now();
 
 function tick(now) {
   requestAnimationFrame(tick);
+  try { frameBody(now); } catch (err) {
+    /* A throw inside the loop used to kill rAF outright and the game simply
+       stopped — which is how a missing HUD element on the finish screen
+       presented as "the game freezes when completing a track". Keep the loop
+       alive and make the cause loud rather than terminal. */
+    console.error('FREEWHEEL frame error:', err);
+  }
+}
+
+function frameBody(now) {
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.25) dt = 0.25;         // a backgrounded tab must not teleport

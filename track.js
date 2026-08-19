@@ -47,9 +47,11 @@ export const COURSES = {
       { name: 'THE LEAP',     len: 120, turn:  -15, grade: -0.15, w: 7.0, zone: 'forest', step: 10.0 },
       { name: 'HAIRPIN L',    len: 110, turn: -165, grade: -0.19, w: 8.5, zone: 'forest', bank: 11 },
       { name: 'THE SPAN',     len: 150, turn:   20, grade: -0.09, w: 6.0, zone: 'rock', bridge: true },
+      { name: 'THE CLOUD DECK',len: 170, turn:   30, grade: -0.06, w: 7.5, zone: 'rock', skyroad: true },
       { name: 'THE ESSES',    len: 170, turn:   10, grade: -0.20, w: 6.6, zone: 'rock', esses: 3, essAmp: 24 },
       { name: 'THE ADIT',     len: 130, turn:  -40, grade: -0.16, w: 6.2, zone: 'rock', tunnel: true },
       { name: 'THE TERRACES', len: 190, turn:   60, grade: -0.21, w: 8.0, zone: 'farm', stairs: 3, stairH: 5.0 },
+      { name: 'THE MILL',     len: 120, turn:  -20, grade: -0.15, w: 6.8, zone: 'farm', hall: true },
       { name: 'THE SWEEP',    len: 200, turn:   95, grade: -0.18, w: 9.5, zone: 'farm', bank: 13 },
       { name: 'THE PINCH',    len:  80, turn:  -25, grade: -0.11, w: 4.6, zone: 'village' },
       { name: 'THE VILLAGE',  len: 190, turn:   45, grade: -0.14, w: 6.4, zone: 'village' },
@@ -234,6 +236,7 @@ export function load(id) {
         halfW: ramp(prevW, w, a),
         zone: seg.zone || 'forest',
         tunnel: !!seg.tunnel, bridge: !!seg.bridge,
+        skyroad: !!seg.skyroad, hall: !!seg.hall,
       });
       const hd = heading + essAt(seg, a);
       heading += turnPerM * STEP;
@@ -249,6 +252,7 @@ export function load(id) {
     x, y: base, z, s, seg: C.segments.length - 1,
     grip: prevGrip, bankMag: prevBank, halfW: prevW,
     zone: C.segments[C.segments.length - 1].zone || 'forest', tunnel: false, bridge: false,
+    skyroad: false, hall: false,
   });
 
   /* Frames. Pitch is signed: negative descends. Vertical curvature is the rate
@@ -314,7 +318,9 @@ export const halfWAt = (s) => lerpField(s, 'halfW');
 const at = (s) => PTS[Math.round(Math.min(PTS.length - 1, Math.max(0, s / STEP)))];
 export const zoneAt   = (s) => at(s).zone;
 export const tunnelAt = (s) => at(s).tunnel;
-export const bridgeAt = (s) => at(s).bridge;
+export const bridgeAt  = (s) => at(s).bridge;
+export const skyroadAt = (s) => at(s).skyroad;
+export const hallAt    = (s) => at(s).hall;
 
 /* Hazards within reach of a cart. A linear scan is fine — a course has a dozen
    of these, and an index would cost more to keep honest than it saves. */
