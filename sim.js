@@ -59,6 +59,12 @@ export const tune = {
      inside the grip circle, which is where a corner should live. */
   steerVel: 6.6,          // lateral velocity a full lock asks for, m/s
   steerGain: 3.4,         // how hard the tyres chase that target
+  /* Extra pull toward zero when you are NOT asking for anything. "It keeps
+     going after I let go" is lateral velocity decaying at the same rate it
+     built, which is not how a car behaves: releasing the wheel should settle it
+     faster than turning it moved it. Scales in as the stick returns to centre,
+     so it never fights a deliberate input. */
+  centreGrip: 0.85,
   steerForce: 10.5,       // (legacy) lateral accel a full lock asks for
   slipDamp: 2.1,          /* how hard the tyres fight a slide. At 3.2 a drift
                              collapsed almost as soon as it started, so there was
@@ -236,7 +242,8 @@ export function step(S, dt) {
        slip damping: with a target of zero this reduces to exactly the old
        damping, so straight-line behaviour is unchanged. */
     const vyWant = In.steer * K.steerVel * Math.min(1, S.v / 7);
-    const desired = (vyWant - S.vy) * K.steerGain - push;
+    const gain = K.steerGain * (1 + K.centreGrip * (1 - Math.min(1, Math.abs(In.steer))));
+    const desired = (vyWant - S.vy) * gain - push;
     S.slip = Math.abs(desired) / limit;
     const aTyre = Math.max(-limit, Math.min(limit, desired));
     S.vy += (aTyre + push) * dt;

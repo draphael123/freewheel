@@ -448,7 +448,10 @@ addEventListener('blur', () => keys.clear());
                asking, which is most of what makes a car feel obedient.
      flip    — reversing direction. Fastest of all: a counter-steer has to bite
                NOW or catching a slide is impossible. */
-const STEER_ATTACK = 7.5, STEER_RELEASE = 13, STEER_FLIP = 20;
+/* Raised after playtest: 7.5 read as "it responds late" and 13 as "it keeps
+   going after I let go". Release stays well above attack — a car feels obedient
+   when it stops asking faster than it starts. */
+const STEER_ATTACK = 11.5, STEER_RELEASE = 19, STEER_FLIP = 26;
 let steerNow = 0;
 export const resetSteer = () => { steerNow = 0; };
 

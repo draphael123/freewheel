@@ -221,12 +221,20 @@ function buildRoad(tr) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(plain.slice(), 3));
+  /* UVs straight off world position, same as the terrain. The road slab has
+     four vertices per ring at different heights (deck and embankment foot), so
+     a proper (s, u) unwrap would need per-vertex bookkeeping this build does
+     not keep — and for a mottle, a planar projection is indistinguishable. */
+  const ruv = [];
+  for (let i = 0; i < pos.length; i += 3) ruv.push(pos[i] / 10, pos[i + 2] / 10);
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(ruv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   roadPlain = new Float32Array(plain);
   roadTint = new Float32Array(tint);
 
-  roadMesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  roadMesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
+    vertexColors: true, map: grainTexture() }));
   roadMesh.receiveShadow = true;
   roadMesh.castShadow = true;
   courseRoot.add(roadMesh);
@@ -486,6 +494,15 @@ function buildTerrain() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  /* Planar UVs off world x/z. Terrain is near enough horizontal for a top-down
+     projection to be invisible, and it costs one attribute. */
+  const uvs = [];
+  for (let j = 0; j <= nz; j++) {
+    for (let i = 0; i <= nx; i++) {
+      uvs.push((minX + i * CELL) / 15, (minZ + j * CELL) / 15);
+    }
+  }
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   /* FLAT shaded. The hillside always had 1.6 m of relief between adjacent
@@ -493,7 +510,7 @@ function buildTerrain() {
      it into a soft gradient that read as an empty field. Faceting it makes the
      same geometry legible, and suits the rest of the art direction. */
   const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
-    vertexColors: true, flatShading: true,
+    vertexColors: true, flatShading: true, map: grainTexture(),
   }));
   m.receiveShadow = true;
   courseRoot.add(m);
@@ -761,8 +778,14 @@ function buildBuildings(tr, mtx, q) {
          same building continuing. */
       const drop = baseY - gy;
       if (drop > 0.4) {
-        mtx.compose(new THREE.Vector3(c.x, gy + drop * 0.5, c.z), q,
-                    new THREE.Vector3(w * 1.05, drop, d * 1.05));
+        /* Run the foundation 1.5 m BELOW the sampled ground. The sampler and
+           the terrain mesh can disagree by a few tens of centimetres on a steep
+           face, and a foundation that stops exactly at the sample is the one
+           thing that turns that into a visible gap under a house. Buried
+           concrete costs nothing. */
+        const dig = drop + 1.5;
+        mtx.compose(new THREE.Vector3(c.x, gy + drop * 0.5 - 0.75, c.z), q,
+                    new THREE.Vector3(w * 1.05, dig, d * 1.05));
         plinths.setMatrixAt(nr, mtx);
       } else {
         /* Level ground still gets a low course of stone at the base. */
@@ -1437,6 +1460,66 @@ function buildFurniture(tr) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* surface grain                                                              */
+/* -------------------------------------------------------------------------- */
+/* A tileable multiplicative mottle for the two biggest surfaces in the game.
+
+   Terrain and tarmac were single flat albedos across hundreds of square metres,
+   which is the most reliable "untextured prototype" signal there is — flat
+   shading is a STYLE, an unbroken field of one value is an absence. This is
+   deliberately high-frequency and shallow (0.80 to 1.0, multiplied): at this
+   camera distance anything lower-frequency reads as blotches, and anything
+   deeper starts to look like damage rather than surface.
+
+   Tileable because it is built on a wrapping lattice — a non-tiling noise shows
+   a seam every repeat, and on a 2.7 km road that is a lot of seams. */
+let _grainTex = null;
+function grainTexture() {
+  if (_grainTex) return _grainTex;
+  const N = 128, LAT = 16;
+  const lat = new Float32Array(LAT * LAT);
+  /* Deterministic: a rebuilt course must not get a different ground. */
+  for (let i = 0; i < LAT * LAT; i++) {
+    const x = Math.sin(i * 127.1 + 311.7) * 43758.5453;
+    lat[i] = x - Math.floor(x);
+  }
+  const at = (i, j) => lat[((j % LAT) + LAT) % LAT * LAT + ((i % LAT) + LAT) % LAT];
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = N;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(N, N);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      let v = 0, amp = 0.5, f = 1;
+      for (let o = 0; o < 3; o++) {
+        const fx = x / N * LAT * f, fy = y / N * LAT * f;
+        const i0 = Math.floor(fx), j0 = Math.floor(fy);
+        const tx = fx - i0, ty = fy - j0;
+        const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+        const a = at(i0, j0), b = at(i0 + 1, j0);
+        const c = at(i0, j0 + 1), d = at(i0 + 1, j0 + 1);
+        v += ((a + (b - a) * sx) + ((c + (d - c) * sx) - (a + (b - a) * sx)) * sy) * amp;
+        amp *= 0.5; f *= 2;
+      }
+      /* 0.80 was too deep: at speed the tarmac read as television static
+         rather than as a surface. Shallow enough to be texture, not damage. */
+      const k = Math.round(255 * (0.885 + 0.115 * Math.min(1, Math.max(0, v))));
+      const o = (y * N + x) * 4;
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = k;
+      img.data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  _grainTex = new THREE.CanvasTexture(cv);
+  _grainTex.wrapS = _grainTex.wrapT = THREE.RepeatWrapping;
+  /* sRGB, or an unflagged canvas texture renders washed and too bright — this
+     has bitten this project before. */
+  _grainTex.colorSpace = THREE.SRGBColorSpace;
+  _grainTex.anisotropy = 4;
+  return _grainTex;
+}
+
+/* -------------------------------------------------------------------------- */
 /* roadside furniture                                                         */
 /* -------------------------------------------------------------------------- */
 /* Scatter density alone could not fix "the track is still fairly bare", and the
@@ -1538,10 +1621,16 @@ function buildRoadside(tr) {
       const off = edge + 7 + rnd(k) * 3;
       const c = v3(T.surfaceAt(s0, side * off));
       const gy = terrainY(tr, c.x, c.z);
-      if (nSt < CAP && Math.abs(gy - c.y) < 9) {
+      /* The gate used to require the ground beside the road to be within 9 m of
+         street level, which on an embanked mountain road is almost never true —
+         so the field walls were silently never built at all, and the farm zones
+         stayed as empty as before I wrote them. Build them on whatever the
+         ground is doing instead, and sink the base so a disagreement between
+         the height sampler and the terrain mesh can never show as a gap. */
+      if (nSt < CAP) {
         const h = 0.85 + rnd(k + 7) * 0.5;
-        mtx.compose(new THREE.Vector3(c.x, gy + h * 0.5, c.z), q,
-                    new THREE.Vector3(0.7 + rnd(k + 3) * 0.3, h, 3.1));
+        mtx.compose(new THREE.Vector3(c.x, gy + h * 0.5 - 0.35, c.z), q,
+                    new THREE.Vector3(0.7 + rnd(k + 3) * 0.3, h + 0.7, 3.1));
         stone.setMatrixAt(nSt++, mtx);
       }
     }
@@ -1553,7 +1642,7 @@ function buildRoadside(tr) {
       const gy = terrainY(tr, c.x, c.z);
       if (nCr < 300) {
         const r = 1.4 + rnd(k + 5) * 2.6;
-        mtx.compose(new THREE.Vector3(c.x, gy + r * 0.45, c.z),
+        mtx.compose(new THREE.Vector3(c.x, gy + r * 0.30, c.z),
                     new THREE.Quaternion().setFromEuler(
                       new THREE.Euler(rnd(k) * 0.6, rnd(k + 1) * 6.2, rnd(k + 2) * 0.6)),
                     new THREE.Vector3(r, r * 0.8, r));
@@ -2004,6 +2093,59 @@ function updateDust(S, dt, at, right) {
 /* One cart, built to order. Rivals are the same object as yours in a different
    colour — nothing about them is cheaper or faked, because the moment they are
    they stop reading as cars in the race and start reading as scenery. */
+/* A lofted hull, not a box.
+
+   The karts read as "assembled boxes" because that is what they were: a
+   tapered cuboid with more cuboids bolted to it. A vehicle body is a section
+   swept along a spine with the section CHANGING, which is a different shape
+   entirely and not much more code — a rounded-rectangle profile lofted through
+   a handful of stations. Flat shaded, so it stays in the same visual language
+   as the rest of the world while stopping being a brick. */
+function hullGeometry(stations, corner = 0.42, seg = 4) {
+  /* One rounded-rectangle ring, in unit half-extents. */
+  const ring = [];
+  for (let q = 0; q < 4; q++) {
+    const cx = (q === 0 || q === 3) ? 1 : -1;
+    const cy = (q < 2) ? 1 : -1;
+    for (let i = 0; i <= seg; i++) {
+      const a = (Math.PI / 2) * (i / seg);
+      const ux = (1 - corner) + corner * Math.cos(a);
+      const uy = (1 - corner) + corner * Math.sin(a);
+      ring.push([cx * (q === 0 || q === 3 ? ux : uy),
+                 cy * (q === 0 || q === 3 ? uy : ux)]);
+    }
+  }
+  const N = ring.length;
+  const pos = [], idx = [];
+  stations.forEach((st) => {
+    for (const [ux, uy] of ring) pos.push(ux * st.w, st.y + uy * st.h, st.z);
+  });
+  for (let s2 = 0; s2 < stations.length - 1; s2++) {
+    for (let i = 0; i < N; i++) {
+      const a = s2 * N + i, b = s2 * N + (i + 1) % N;
+      const c = a + N, d = b + N;
+      idx.push(a, c, b, b, c, d);
+    }
+  }
+  /* Caps, as fans around the section centre. */
+  const capAt = (si, flip) => {
+    const st = stations[si];
+    const ci = pos.length / 3;
+    pos.push(0, st.y, st.z);
+    for (let i = 0; i < N; i++) {
+      const a = si * N + i, b = si * N + (i + 1) % N;
+      idx.push(...(flip ? [ci, b, a] : [ci, a, b]));
+    }
+  };
+  capAt(0, true);
+  capAt(stations.length - 1, false);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 /* Race numbers, drawn once per number and cached. A team colour tells you WHICH
    kart at a glance; a number tells you which one it was afterwards, and it is
    the cheapest thing on a vehicle that says "this is a real entry in a real
@@ -2044,18 +2186,18 @@ function makeCart(col) {
 
   /* Silhouette first: a long low shell, a rider sat high in it, small wheels.
      Equal-sized lumps read as a pile whatever detail you bolt on. */
-  const shell = new THREE.BoxGeometry(1.5, 0.46, 3.0);
-  const pos = shell.attributes.position;
-  for (let i = 0; i < pos.count; i++) {
-    const z = pos.getZ(i);
-    if (z > 0) {                               // taper toward the nose
-      pos.setX(i, pos.getX(i) * 0.62);
-      pos.setY(i, pos.getY(i) * 0.72 - 0.05);
-    }
-  }
-  shell.computeVertexNormals();
+  /* Stations from tail to nose: wide and deep at the back where the driver and
+     the engine are, drawn in and dropped toward the nose. */
+  const shell = hullGeometry([
+    { z: -1.52, w: 0.66, h: 0.20, y: 0.44 },
+    { z: -1.10, w: 0.76, h: 0.25, y: 0.44 },
+    { z: -0.30, w: 0.78, h: 0.25, y: 0.44 },
+    { z: 0.45, w: 0.72, h: 0.22, y: 0.43 },
+    { z: 1.10, w: 0.52, h: 0.17, y: 0.41 },
+    { z: 1.62, w: 0.30, h: 0.12, y: 0.40 },
+  ]);
   const body = new THREE.Mesh(shell, paint);
-  body.position.y = 0.44; body.castShadow = true;
+  body.castShadow = true;                      // stations carry their own height
   G.add(body);
 
   const pan = new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.16, 2.7), dark);
@@ -2066,15 +2208,12 @@ function makeCart(col) {
      no amount of wings and pipes fixes that. Angled in at the front so they
      read as bodywork rather than as two crates strapped to the floor. */
   for (const sx of [-1, 1]) {
-    const podG = new THREE.BoxGeometry(0.46, 0.42, 1.5);
-    const pp = podG.attributes.position;
-    for (let i = 0; i < pp.count; i++) {
-      if (pp.getZ(i) > 0) {
-        pp.setX(i, pp.getX(i) - sx * 0.13);
-        pp.setY(i, pp.getY(i) * 0.72);
-      }
-    }
-    podG.computeVertexNormals();
+    const podG = hullGeometry([
+      { z: -0.78, w: 0.20, h: 0.17, y: 0 },
+      { z: -0.30, w: 0.24, h: 0.21, y: 0 },
+      { z: 0.30, w: 0.23, h: 0.20, y: 0 },
+      { z: 0.74, w: 0.13, h: 0.13, y: 0 },
+    ], 0.55);
     const pod = new THREE.Mesh(podG, paint);
     pod.position.set(sx * 0.86, 0.44, 0.10);
     pod.castShadow = true;
@@ -2138,7 +2277,7 @@ function makeCart(col) {
     const pivot = new THREE.Group();            // steering
     pivot.position.set(x, r, z);
     const spin = new THREE.Group();             // rolling
-    const g = new THREE.CylinderGeometry(r, r, 0.26, 14);
+    const g = new THREE.CylinderGeometry(r, r, 0.26, 20);
     g.rotateZ(Math.PI / 2);
     const w = new THREE.Mesh(g, tyre);
     w.castShadow = true;
@@ -2563,18 +2702,34 @@ function placeCart(group, St, dt) {
   A.wasAir = St.air;
   A.susp *= Math.max(0, 1 - dt * 6);
 
-  /* YAW INTO THE SLIDE. This is the whole reason a drift did not feel like
-     one: the cart slid sideways while remaining perfectly square to the road,
-     so the only evidence you were drifting was a meter. Point the nose at the
-     inside of the corner and the same physics reads as a drift. */
-  /* Sign matters and is easy to get backwards. Local +X is nrm x tan, which
-     points to the rider's LEFT, so a POSITIVE rotation.y swings the nose left.
-     Sliding right (vy > 0) should therefore yaw positive — nose into the
-     corner while the cart travels outward, which is the oversteer look. Nose
-     pointing along the path is what a gripping car does and reads as nothing. */
-  const slipAngle = Math.atan2(St.vy, Math.max(6, St.v));
-  A.yaw += (Math.max(-0.62, Math.min(0.62, slipAngle * 1.9)) - A.yaw)
-         * Math.min(1, dt * 9);
+  /* THE KART MUST POINT WHERE YOU STEER.
+
+     This used to be driven ENTIRELY by lateral speed, on the assumption that
+     sideways movement always means being pushed wide — which is true in a
+     corner and backwards everywhere else. Steer right on a straight and the
+     old rule pointed the nose LEFT, and because lateral speed takes a moment
+     to build, whatever rotation you did get arrived about a third of a second
+     late. Measured: 7 degrees at quarter lock, lagging the input. You pressed a
+     key and a slab translated sideways still facing down the road. That is
+     most of what "clunky" was, and none of it is physics.
+
+     Two terms now:
+       steering — the nose turns the instant you ask, in the direction you ask.
+                  Sign: local +X is nrm x tan, which points to the rider's LEFT,
+                  so a POSITIVE rotation.y swings the nose LEFT. Steering right
+                  is +1, so it wants a NEGATIVE yaw.
+       slide    — opposite lock, but ONLY once the tyres are actually over the
+                  limit. That is what makes a drift read as a drift instead of
+                  as permanent oversteer during ordinary cornering. */
+  const stIn = (St.input && St.input.steer) || 0;
+  const fast = Math.min(1, St.v / 9);
+  let wantYaw = -stIn * 0.34 * fast;
+  if (St.slip > 1 && !St.air) {
+    const over = Math.min(1, (St.slip - 1) * 1.4);
+    wantYaw += Math.sign(St.vy) * over * 0.30;
+  }
+  A.yaw += (Math.max(-0.68, Math.min(0.68, wantYaw)) - A.yaw)
+         * Math.min(1, dt * 16);
 
   G.rotation.y = A.yaw;
   G.rotation.z = A.roll;
