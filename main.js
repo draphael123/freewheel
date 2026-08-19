@@ -272,6 +272,17 @@ function startRun(courseId, route) {
      route is a different centreline, so caching on course id alone would race
      you down last run's mountain. */
   if (courseId && (route || courseId !== T.ID)) {
+    /* Tell the renderer what has closed BEFORE it builds, so the roads you can
+       no longer take come up chained rather than merely unchosen. */
+    const shut = new Set();
+    for (const f of T.forksOf(courseId)) {
+      for (const b of f.branches) {
+        if (!SEASON.state() || !SEASON.isOpen(f.id, b.id)) {
+          if (SEASON.state()) shut.add(f.id + '/' + b.id);
+        }
+      }
+    }
+    R.setClosedRoads(shut);
     T.load(courseId, route ? routeWithWear(courseId, route) : null);
     R.build();
     drawProfile();
@@ -419,7 +430,10 @@ function updateHUD(dt) {
   el('mphU').textContent = kph ? 'KM/H' : 'MPH';
   el('sfill').style.width =
     Math.max(0, Math.min(100, (S.v / 34) * 100)) + '%';
-  el('seg').textContent = T.NAMES[T.segAt(S.s)];
+  /* placeAt, not NAMES[segAt]: a fork branch is a place with its own name and
+     does not correspond to a spine segment. Without this the HUD announced
+     STEEP DROP while you were driving THE DROP. */
+  el('seg').textContent = T.placeAt(S.s);
 
   /* Grip: how much of what the tyres can supply the corner is already using.
      Past the mark they have let go and you are sliding. */

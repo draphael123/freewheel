@@ -236,6 +236,30 @@ export let ID, TITLE, BLURB, OWNS, THEME, HALF_W, SLAB;
 export let PTS, LENGTH, NAMES, TOP_Y, BOT_Y, HAZARDS;
 /* The fork table for the loaded course, and the route actually driven. */
 export let FORKS = [], ROUTE = {};
+let SPINE = null;
+
+/* The centreline of any branch, chosen or not, in world space. This is what
+   lets the renderer show you the road you turned down. */
+export function branchPolyline(forkId, branchId, step = 3) {
+  const f = FORKS.find((k) => k.id === forkId);
+  if (!f || !SPINE) return [];
+  const b = branchOf(f, branchId);
+  const span = f.to - f.from;
+  const out = [];
+  for (let t = f.from; t <= f.to; t += step) {
+    const i = Math.round(t / STEP);
+    const p = SPINE[Math.min(SPINE.length - 1, Math.max(0, i))];
+    if (!p) continue;
+    const k = bump((t - f.from) / span);
+    const off = b.side * b.bulge * k;
+    out.push({
+      x: p.x + p.rx * off, y: p.y, z: p.z + p.rz * off,
+      w: p.halfW + ((b.w != null ? b.w : p.halfW) - p.halfW) * k,
+      k,
+    });
+  }
+  return out;
+}
 
 export const forksOf = (id) => (COURSES[id] || {}).forks || [];
 export const defaultRoute = (id) => {
@@ -324,6 +348,13 @@ export function load(id, route) {
     const hl = Math.hypot(hx, hz) || 1e-6;
     rgt[i * 2] = -hz / hl; rgt[i * 2 + 1] = hx / hl;
   }
+  /* Keep the undisplaced spine. The roads you did NOT take have to be drawn,
+     and they cannot be recovered from PTS once a branch has been baked in and
+     the whole thing resampled. */
+  SPINE = pts.map((p, i) => ({
+    x: p.x, y: p.y, z: p.z, s: p.s,
+    rx: rgt[i * 2], rz: rgt[i * 2 + 1], halfW: p.halfW,
+  }));
   for (const f of FORKS) {
     /* A route entry is either a branch id, or {id, grip, width} carrying the
        season's wear factors. track.js deliberately does not know what wear IS

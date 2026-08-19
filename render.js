@@ -781,6 +781,32 @@ function buildBuildings(tr, mtx, q) {
 /* A deck of cloud just below a stretch of road with nothing under it. Two
    translucent layers drifting at different rates, so it reads as weather you
    are above rather than as a grey floor. */
+/* A soft-edged disc, built once. Both map and alphaMap so the sheet fades in
+   value as well as in opacity — an alpha-only fade still shows a bright ring
+   where the geometry ends. */
+let _cloudTex = null;
+function cloudFade() {
+  if (_cloudTex) return _cloudTex;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const g = cv.getContext('2d');
+  /* Black to white in COLOUR, not in alpha. three's alphaMap samples the GREEN
+     channel, and a gradient painted with rgba() over a transparent canvas comes
+     out white everywhere the alpha is non-zero — so the first version faded
+     nothing and the deck kept its hard edge. */
+  g.fillStyle = '#000'; g.fillRect(0, 0, 128, 128);
+  const rad = g.createRadialGradient(64, 64, 6, 64, 64, 62);
+  rad.addColorStop(0.00, '#ffffff');
+  rad.addColorStop(0.55, '#d8d8d8');
+  rad.addColorStop(1.00, '#000000');
+  g.fillStyle = rad; g.fillRect(0, 0, 128, 128);
+  _cloudTex = new THREE.CanvasTexture(cv);
+  /* A mask, not a colour: leave it in NoColorSpace or the transfer curve bends
+     the falloff. */
+  _cloudTex.colorSpace = THREE.NoColorSpace;
+  return _cloudTex;
+}
+
 function buildCloudDeck() {
   cloudDecks = [];
   let run = null;
@@ -789,11 +815,17 @@ function buildCloudDeck() {
     const mid = (run.a + run.b) / 2;
     const c = v3(T.surfaceAt(mid, 0));
     for (let layer = 0; layer < 2; layer++) {
-      const g = new THREE.PlaneGeometry(1100, 1100, 1, 1);
+      const g = new THREE.PlaneGeometry(620, 620, 1, 1);
       g.rotateX(-Math.PI / 2);
+      /* FrontSide, normal up: visible from ABOVE the deck, invisible from
+         below — a cloud you have descended through is behind you. And a RADIAL
+         fade, because a cloud with a straight edge is a rug: at 1100 m square
+         and double-sided this sheet blanketed the entire valley for the whole
+         upper half of the course and the world came back washed white. */
       const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
-        color: 0xf2f4f8, transparent: true, opacity: layer ? 0.55 : 0.82,
-        depthWrite: false, side: THREE.DoubleSide, fog: true,
+        color: 0xf2f4f8, alphaMap: cloudFade(),
+        transparent: true, opacity: layer ? 0.55 : 0.82,
+        depthWrite: false, side: THREE.FrontSide, fog: true,
       }));
       m.position.set(c.x, c.y - 7 - layer * 9, c.z);
       m.renderOrder = 1 + layer;
@@ -1345,6 +1377,94 @@ function buildFurniture(tr) {
   poles.count = np; cords.count = nc;
   flagSet.forEach((m, i) => { m.count = nf[i]; if (nf[i]) courseRoot.add(m); });
   courseRoot.add(poles, cords);
+}
+
+/* -------------------------------------------------------------------------- */
+/* the roads you did not take                                                 */
+/* -------------------------------------------------------------------------- */
+/* Without these the fork is a menu and nothing else — you would never see the
+   mountain shrinking, only read about it on a board between runs. A road you
+   turned down is drawn dark and slightly sunk so it never competes with the one
+   you are on; a road that has CLOSED gets a barrier and a sag, because "gone"
+   has to be visible from the seat, not just true in a save file.
+
+   `open` here means open in the season, not chosen this run. */
+function buildGhostRoads(closedSet) {
+  if (!T.FORKS || !T.FORKS.length) return;
+  /* These are sRGB material colours; the real road is painted with LINEAR
+     vertex colours around 0.11. 0x2a2724 is linear ~0.02, so the first version
+     drew the road-not-taken as a black void beside you rather than as a road.
+     0x4e4841 lands just under the tarmac once tone mapped. */
+  const deck = new THREE.MeshLambertMaterial({ color: 0x4e4841 });
+  const shut = new THREE.MeshLambertMaterial({ color: 0x3d3730 });
+  const chainM = new THREE.MeshLambertMaterial({ color: 0xb2452c });
+
+  for (const f of T.FORKS) {
+    for (const b of f.branches) {
+      if (T.ROUTE[f.id] === b.id) continue;             // that is the road we are on
+      const line = T.branchPolyline(f.id, b.id, 3);
+      if (line.length < 2) continue;
+      const isShut = closedSet && closedSet.has(f.id + '/' + b.id);
+
+      const pos = [], idx = [];
+      for (let i = 0; i < line.length; i++) {
+        const p = line[i];
+        const q0 = line[Math.max(0, i - 1)], q1 = line[Math.min(line.length - 1, i + 1)];
+        const hx = q1.x - q0.x, hz = q1.z - q0.z;
+        const hl = Math.hypot(hx, hz) || 1e-6;
+        const rx = -hz / hl, rz = hx / hl;
+        /* Sunk a little, and sunk MORE where a closed road has given way. */
+        const sag = isShut ? 0.35 + 1.9 * p.k : 0.28;
+        pos.push(p.x - rx * p.w, p.y - sag, p.z - rz * p.w,
+                 p.x + rx * p.w, p.y - sag, p.z + rz * p.w);
+        if (i > 0) {
+          const a = (i - 1) * 2, c = i * 2;
+          idx.push(a, a + 1, c, a + 1, c + 1, c);
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setIndex(idx);
+      g.computeVertexNormals();
+      /* Winding decides which way the normals point, and a ribbon built
+         left-then-right per station can come out either way depending on which
+         way the road is heading. Wrong side and Lambert lights it from beneath:
+         the road-not-taken rendered as a black wedge. Check and flip rather
+         than guess. */
+      const nrmA = g.attributes.normal;
+      if (nrmA && nrmA.getY(0) < 0) {
+        const ix = g.index.array;
+        for (let t = 0; t < ix.length; t += 3) {
+          const tmp = ix[t + 1]; ix[t + 1] = ix[t + 2]; ix[t + 2] = tmp;
+        }
+        g.index.needsUpdate = true;
+        g.computeVertexNormals();
+      }
+      const m = new THREE.Mesh(g, isShut ? shut : deck);
+      m.receiveShadow = true;
+      courseRoot.add(m);
+
+      if (isShut) {
+        /* A chain across the mouth. One bar, at the point where the branch
+           leaves the road you are on, so you see it as you go past. */
+        const p = line[Math.min(6, line.length - 1)];
+        const bar = new THREE.Mesh(
+          new THREE.BoxGeometry(p.w * 2.1, 0.22, 0.22), chainM);
+        bar.position.set(p.x, p.y + 1.0, p.z);
+        bar.lookAt(line[Math.min(10, line.length - 1)].x, p.y + 1.0,
+                   line[Math.min(10, line.length - 1)].z);
+        bar.rotateY(Math.PI / 2);
+        bar.castShadow = true;
+        courseRoot.add(bar);
+        for (const sx of [-1, 1]) {
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.2, 2.0, 0.2), chainM);
+          post.position.set(p.x, p.y + 0.9, p.z);
+          post.translateX(0); post.castShadow = true;
+          courseRoot.add(post);
+        }
+      }
+    }
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1989,6 +2109,11 @@ export function init(canvas) {
 /* Tear down and regenerate everything that belongs to a course. Called on boot
    and whenever the venue changes. The cart, the sky dome, the dust and the
    lights persist and are simply recoloured — only the world is rebuilt. */
+/* Which branches the season has closed, as a Set of "forkId/branchId". Passed
+   in rather than imported, so render.js stays ignorant of the season. */
+let closedRoads = null;
+export const setClosedRoads = (set) => { closedRoads = set; };
+
 export function build() {
   TH = THEME.get(T.THEME);
   SUN_DIR.set(...TH.sun.dir).normalize();
@@ -2026,6 +2151,7 @@ export function build() {
   buildBarriers();
   buildMarks();
   buildSetPieces(tr);
+  buildGhostRoads(closedRoads);
   buildFurniture(tr);
   buildCloudDeck();
   buildHalls();
