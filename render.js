@@ -183,6 +183,45 @@ function buildRoad(tr) {
 function buildCentreLine() {
   stripe(4.5, 4.0, 0.42, [0], 1.0);                    // centre dashes
   stripe(6.0, 0.0, 0.26, 'edges', 0.62);               // solid edge lines
+  buildKerbs();
+}
+
+/* Red-and-white kerbs on the inside of every real corner. Nothing else says
+   "racing circuit" so cheaply, and they double as a legible apex marker: the
+   inside of the corner is now a thing you can aim at instead of a guess. */
+function buildKerbs() {
+  const red = new THREE.MeshLambertMaterial({ color: 0xc0392b });
+  const white = new THREE.MeshLambertMaterial({ color: 0xe8e2d4 });
+  const posA = [], posB = [];
+  const idxA = [], idxB = [];
+  const W = 1.5, LIFT = 0.06, SEG = 2.6;
+  let k = 0;
+  for (let s0 = 4; s0 < T.LENGTH - SEG; s0 += SEG, k++) {
+    const kh = T.khAt(s0 + SEG / 2);
+    if (Math.abs(kh) < 0.010) continue;                // only real corners
+    /* Both edges. Which side is the apex depends on a sign convention it is
+       easy to get backwards, and karting circuits kerb both sides anyway. */
+    for (const side of [-1, 1]) {
+      const pos = (k % 2) ? posA : posB;
+      const idx = (k % 2) ? idxA : idxB;
+      const base = pos.length / 3;
+      for (const s of [s0, s0 + SEG]) {
+        const { right, nrm } = basisAt(s);
+        const c = v3(T.surfaceAt(s, T.halfWAt(s) * side)).addScaledVector(nrm, LIFT);
+        pos.push(...c.clone().addScaledVector(right, -side * W).toArray());
+        pos.push(...c.toArray());
+      }
+      idx.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+    }
+  }
+  for (const [pos, idx, mat] of [[posA, idxA, red], [posB, idxB, white]]) {
+    if (!idx.length) continue;
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    courseRoot.add(new THREE.Mesh(g, mat));
+  }
 }
 
 /* One ribbon builder for both. Loose quads rather than a texture so the paint
@@ -1170,21 +1209,15 @@ export function frame(S, dt) {
   if (attr.array !== want) { attr.array.set(want); attr.needsUpdate = true; }
 
   /* ---- camera ----------------------------------------------------------- */
-  /* Yaw snaps to eight compass directions with hysteresis, so each stretch of
-     road is framed from a known angle and can be composed rather than merely
-     rendered. Hysteresis matters: without it the camera flips back and forth
-     for the whole length of any road that sits on a boundary. */
-  const desired = T.headAt(S.s);
-  const OCT = Math.PI / 4;
-  const snapped = Math.round(desired / OCT) * OCT;
-  let delta = snapped - camYawTarget;
-  while (delta > Math.PI) delta -= 2 * Math.PI;
-  while (delta < -Math.PI) delta += 2 * Math.PI;
-  if (Math.abs(delta) > OCT * 0.62) camYawTarget += delta;
-  let e = camYawTarget - camYaw;
+  /* Yaw follows the road CONTINUOUSLY and slowly. It used to snap to eight
+     compass points, which frames a straight nicely and is miserable on a
+     course with sixteen corners: every turn fired a re-frame and the whole
+     view lurched. Smooth and lazy beats composed and jerky. */
+  const desired = T.headAt(Math.min(T.LENGTH - 1, S.s + 22));
+  let e = desired - camYaw;
   while (e > Math.PI) e -= 2 * Math.PI;
   while (e < -Math.PI) e += 2 * Math.PI;
-  camYaw += e * Math.min(1, dt * 3.2);
+  camYaw += e * Math.min(1, dt * 1.5);
 
   /* Look ahead of the cart so it sits low in frame. On a fixed iso camera the
      sightline is short and the cart must never be centred, or the player is
@@ -1197,7 +1230,7 @@ export function frame(S, dt) {
      to occupy MORE of the frame, not the same fraction of a bigger one. The
      boost punches IN rather than out: a camera that tightens under power is
      the oldest trick for selling acceleration and it still works. */
-  const punch = (S.input && S.input.thrust && S.charge > 0.02) ? -5.0 : 0;
+  const punch = (S.input && S.input.boost && S.charge > 0.02) ? -4.0 : 0;
   camSize += ((46 + S.v * 0.50 + punch) - camSize) * Math.min(1, dt * 2.6);
   applyCamSize(camSize);
 
@@ -1205,7 +1238,8 @@ export function frame(S, dt) {
      whole frame translates instead of the view swinging. Scales with the
      square of speed so it is absent at a crawl and unmistakable at 50. */
   shakeT += dt * 43;
-  const amp = opts.shake ? Math.pow(Math.min(1, S.v / 30), 2) * (S.air ? 0.06 : 0.30) : 0;
+  /* A tenth of what it was. At 0.30 the frame never settled. */
+  const amp = opts.shake ? Math.pow(Math.min(1, S.v / 30), 2) * (S.air ? 0.01 : 0.05) : 0;
   tgt.x += Math.sin(shakeT * 1.7) * amp;
   tgt.y += Math.cos(shakeT * 2.31) * amp * 0.8;
   const dir = new THREE.Vector3(

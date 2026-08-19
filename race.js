@@ -90,28 +90,24 @@ export function createField() {
    -------------------------------------------------------------------------- */
 function driveAI(c, field, dt) {
   const ai = c.ai;
-  const kh = T.khAt(c.s), pitch = T.pitchAt(c.s);
-  const grip = T.gripAt(c.s);
   const edge = T.halfWAt(c.s) - 1.4;
 
-  /* What is coming, seen through their reaction time. A low-skill rival is
-     visibly LATE rather than merely slower — they lift and brake after the
-     corner has already started, which you can watch happen. */
-  const look = Math.max(10, c.v * (0.95 - 0.35 * ai.skill));
-  const lead = Math.min(T.LENGTH - 1, c.s + look);
-  const khA = Math.abs(T.khAt(lead));
-  const need = c.v * c.v * khA;
+  /* How much cornering the road is about to ask for, in units of what the
+     tyres can supply. Seen through their reaction time, so a poor rival is
+     visibly LATE rather than merely slower. */
+  const lead = Math.max(14, c.v * (1.35 - 0.35 * ai.skill));
+  const s2 = Math.min(T.LENGTH - 1, c.s + lead);
+  const need = Math.abs(c.v * c.v * T.khAt(s2) - SIM.tune.G * Math.sin(T.bankAt(s2)));
+  const soon = need / (SIM.tune.mu * SIM.tune.G * T.gripAt(c.s));
 
-  /* Line: hug the inside of the corner, plus a personal bias so the field does
-     not converge into a single file. */
-  const dirAhead = T.khAt(Math.min(T.LENGTH - 1, c.s + look * 0.6));
+  /* Line: hug the inside, plus a personal bias so the field does not converge
+     into a single file. */
+  const dirAhead = T.khAt(Math.min(T.LENGTH - 1, c.s + lead * 0.6));
   let target = -Math.sign(dirAhead) * edge * 0.78 * ai.skill + ai.line * edge * 0.40;
 
-  /* Avoidance. Considers everyone nearby rather than only the first car found,
-     and picks whichever side actually has room — a rival that always swerved
-     the same way just herded the pack into one corner of the road and ground
-     there. `boxed` then tells them to sit and wait instead of leaning on the
-     car in front. */
+  /* Avoidance considers everyone nearby and picks the side with room; a rival
+     that always swerved the same way herded the pack into one corner of the
+     road and ground there. */
   let boxed = false, blocker = null;
   for (const o of field.carts) {
     if (o === c || o.done) continue;
@@ -137,22 +133,14 @@ function driveAI(c, field, dt) {
   }
   target = Math.max(-edge, Math.min(edge, target));
 
-  /* Tuck is the whole trade: fast in a line, no steering. A good rival lifts
-     early for a corner; a poor one stays tucked into it and runs wide. */
-  /* Where they lift. This is the number that sets pace, and it is deliberately
-     bracketed around the reference racer's 9.0: the best rival is a shade
-     braver, the worst clearly timid, so the field has a pecking order you can
-     see rather than four drivers within a second of each other. */
-  const tuck = need < grip * (2.0 + 6.0 * ai.skill);
-
   return {
-    tuck,
-    steer: Math.max(-1, Math.min(1, (target - c.u) * 0.9)),
-    brake: need > grip * (24.0 - 6.0 * ai.skill) && pitch < 0.02,
-    /* Poor drivers dribble the boost away in slivers instead of banking it. */
-    /* Do not shove the car in front — banked boost is worth more than a
-       rear-end that costs you both. */
-    thrust: !boxed && c.charge > (0.75 - 0.45 * ai.skill) && pitch > -0.18,
+    /* Where they lift and brake is the pace lever, bracketed around the
+       reference racer's 1.35 / 1.60. */
+    throttle: soon < (0.85 + 0.70 * ai.skill),
+    brake: soon > (2.15 - 0.60 * ai.skill),
+    steer: Math.max(-1, Math.min(1, (target - c.u) * 0.9 - c.vy * 0.14)),
+    hand: false,
+    boost: !boxed && c.charge > (0.75 - 0.45 * ai.skill) && soon < 0.8,
   };
 }
 
@@ -218,7 +206,7 @@ function interact(field, dt) {
     c.mod = c.mod || {};
     c.mod.drag = (c.drafting ? K.draftDrag : 1) * (c.pace ?? 1);
     if (c.drafting && !c.air) {
-      c.charge = Math.min(SIM.tune.chargeMax, c.charge + K.draftCharge * dt);
+      c.charge = Math.min(SIM.tune.boostMax, c.charge + K.draftCharge * dt);
     }
   }
 }
@@ -279,11 +267,16 @@ export function sim(opts = {}) {
      against a good policy is exactly how the rivals ended up quicker than any
      human could be — the question is whether a mediocre driver has a race, not
      whether a robot does. */
+  /* Flat out, steers roughly, never brakes. NOTE: this used to be written with
+     the old input names, so it silently never touched the throttle and reported
+     the floor as 69 s adrift — a harness that never drove, reported as a
+     balance result. */
   const beginner = (S) => ({
-    tuck: true,
-    steer: Math.max(-1, Math.min(1, -S.u * 0.42)) * 0.7,
+    throttle: true,
     brake: false,
-    thrust: S.charge > 0.4,
+    steer: Math.max(-1, Math.min(1, -S.u * 0.36 - S.vy * 0.16)) * 0.8,
+    hand: false,
+    boost: S.charge > 0.4,
   });
   /* Three reference drivers, because one number cannot answer "is this fair".
      beginner = the floor a first run should clear; good = a competent human,

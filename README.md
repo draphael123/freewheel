@@ -11,33 +11,36 @@ snowline to the sea.
 
 ## The mechanic
 
-Hold **SPACE** to **tuck**. Tucked you are fast and you can barely steer — so
-tuck the straights and **lift for the corners**. The grip meter tells you when:
-past the mark you are going wide whatever you press.
+`W` to go, `S` to brake, `A`/`D` to steer, `SPACE` to break traction, `SHIFT`
+to spend boost.
 
-The **flywheel** winds off the wheels, off the brakes, off a clean landing, and
-fastest of all in someone's slipstream. Hold **W** to spend it.
+Your tyres can only supply so much lateral force. Ask for more and the cart
+**slides** — the grip meter shows how close you are, and past the mark you are
+going wherever the corner sends you. Overcook it badly enough and you spin.
+
+**Sliding charges the boost**, so the risky line is also the fast one. A tow
+charges it too, as does a clean landing.
 
 | | |
 |---|---|
-| `SPACE` | tuck (hold) |
-| `W` | spend flywheel |
+| `W` | throttle |
+| `S` | brake |
 | `A` / `D` | steer |
-| `S` | drag brake |
-| `R` | restart |
-| `ESC` | settings |
+| `SPACE` | handbrake — break traction |
+| `SHIFT` | spend boost |
+| `R` | restart · `ESC` settings |
 
-### The pump was cut
+### It used to be a gravity racer
 
-The original hook was pumping the terrain for speed, the way a skater pumps a
-bowl. It was measured working and it was still removed, because it failed two
-playtests in a row — first as boring, then as simply not understood. Road
-curvature is an order of magnitude gentler than a skate bowl, so it only ever
-paid at an 18x fudge factor. A mechanic needing that much propping up that
-still cannot be read is not a hook.
+There was no throttle: speed came from reading the terrain, and `SPACE` was a
+tuck that traded steering for drag. That premise was defended through three
+redesigns and rejected in four playtests — *"I would like to steer and
+accelerate"*, *"there is no way to accelerate"*, *"I do not understand what tuck
+does"*, *"auto accelerate does not make sense"*. Both of tuck's effects were
+invisible, so no amount of rebalancing was ever going to make it read.
 
-What replaced it is a trade you get in one corner, on the same key, with the
-same animation.
+What makes it a race now is the **grip limit**. A braking point is only a
+decision if arriving too fast costs you the corner.
 
 ## The race
 
@@ -156,6 +159,12 @@ Physics numbers came out of `FW.sim()`, not out of taste:
   that touched on the grid held each other at zero for the entire race, and the
   field report quietly averaged over the three that got away. Scale contact
   losses by speed, and make the harness name its non-finishers.
+- **Crashing has to cost more than braking.** With a cheap spin, a policy that
+  never braked took nine barrier hits and two spins and still beat one that drove
+  properly by three seconds — which makes the grip limit a decoration.
+- **And the reference driver was over-cautious.** Lifting at 0.85 of the grip
+  limit lost to flat-out; lifting at 1.35 gains three seconds in a hundred with
+  no spins. Swept, not guessed.
 - **A tunnel on a fixed iso camera is unplayable.** The roof hides the road,
   the cart and every rival under it. The ceiling is its own mesh so it can fade
   out while you are inside and close again behind you.

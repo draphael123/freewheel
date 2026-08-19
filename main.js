@@ -133,8 +133,8 @@ el('toIntro').onclick = () => show('intro');
 const keys = new Set();
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
-  if ([' ', 'a', 'd', 's', 'w', 'arrowleft', 'arrowright', 'arrowdown', 'arrowup']
-      .includes(k)) e.preventDefault();
+  if ([' ', 'a', 'd', 's', 'w', 'shift', 'arrowleft', 'arrowright', 'arrowdown',
+       'arrowup'].includes(k)) e.preventDefault();
   if (keys.has(k)) return;
   keys.add(k);
 
@@ -154,9 +154,10 @@ addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => keys.clear());
 
 function readInput() {
-  S.input.tuck = keys.has(' ');
+  S.input.throttle = keys.has('w') || keys.has('arrowup');
   S.input.brake = keys.has('s') || keys.has('arrowdown');
-  S.input.thrust = keys.has('w') || keys.has('arrowup') || keys.has('shift');
+  S.input.hand = keys.has(' ');
+  S.input.boost = keys.has('shift');
   S.input.steer = (keys.has('d') || keys.has('arrowright') ? 1 : 0)
                 - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
 }
@@ -184,26 +185,24 @@ function updateHUD(dt) {
   el('mph').textContent = Math.round(S.v * 2.2369);
   el('seg').textContent = T.NAMES[T.segAt(S.s)];
 
-  /* Slip: how much of the corner your steering can still answer. Past 1 you go
-     wide no matter what you press, and the only cure is to come out of the
-     tuck. This replaced a load meter that measured a mechanic that no longer
-     exists. */
+  /* Grip: how much of what the tyres can supply the corner is already using.
+     Past the mark they have let go and you are sliding. */
   const slip = S.air ? 0 : S.slip;
   el('loadfill').style.width = Math.min(100, slip * 62) + '%';
-  el('loadfill').style.background = slip > 1 ? 'var(--red)'
-    : slip > 0.72 ? 'var(--warm)' : 'var(--cold)';
+  el('loadfill').style.background = S.spun > 0 ? 'var(--red)'
+    : slip > 1 ? 'var(--red)' : slip > 0.8 ? 'var(--warm)' : 'var(--cold)';
   /* Flywheel. Shown in seconds because that is what you spend. */
-  const ch = S.charge / SIM.tune.chargeMax;
+  const ch = S.charge / SIM.tune.boostMax;
   el('chgfill').style.width = (ch * 100) + '%';
   el('chgnum').textContent = S.charge.toFixed(1) + 's';
-  el('chg').classList.toggle('spent', S.input.thrust && S.charge > 0);
+  el('chg').classList.toggle('spent', S.input.boost && S.charge > 0);
   el('chg').classList.toggle('ready', S.charge > 0.25);
 
-  const want = S.air ? 'airborne'
-    : slip > 1 ? 'lift — you are going wide'
-    : slip > 0.72 ? 'lift for the corner' : 'tuck';
+  const want = S.spun > 0 ? 'spun — you lost it'
+    : S.air ? 'airborne'
+    : slip > 1 ? 'sliding' : slip > 0.8 ? 'on the limit' : 'gripping';
   el('cue').textContent = want;
-  el('cue').classList.toggle('on', slip > 0.72);
+  el('cue').classList.toggle('on', slip > 0.8);
 
   /* Standings. The single most important number on screen now — it is the
      reason any of the rest of it matters. */
@@ -215,7 +214,8 @@ function updateHUD(dt) {
     ? `+${gap.seconds.toFixed(1)}s  ${gap.name}`
     : 'leading';
   el('gap').classList.toggle('lead', !gap);
-  el('draft').classList.toggle('on', !!S.drafting);
+  el('draft').classList.toggle('on', !!S.drafting || Math.abs(S.drift) > SIM.tune.driftMin);
+  el('draft').textContent = Math.abs(S.drift) > SIM.tune.driftMin ? 'drifting' : 'tow';
 
   const i = Math.min(PROF.length - 1, Math.floor((S.s / T.LENGTH) * (PROF.length - 1)));
   el('profdone').setAttribute('points', PROF.slice(0, i + 1).map((p) => p.join(',')).join(' '));
@@ -244,7 +244,7 @@ function finish() {
   el('dtop').textContent = Math.round(S.vMax * 2.2369);
   el('dpump').textContent = S.cleanLandings;
   el('dair').textContent = S.airTotal.toFixed(1);
-  el('dthrust').textContent = (S.thrustTotal * 2.2369).toFixed(1);
+  el('dthrust').textContent = S.driftTime.toFixed(1) + 's';
   el('dcourse').textContent = T.TITLE;
   const b = bestFor(T.ID);
   if (b === null || S.t < b) {

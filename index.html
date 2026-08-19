@@ -254,8 +254,8 @@
   <div class="t num" id="dtime" style="font-size:40px;margin-top:16px">0.00</div>
   <div class="lbl">seconds</div>
   <div class="best" id="dbest"></div>
-  <div class="r">top speed <b id="dtop">0</b> mph &middot; clean landings <b id="dpump">0</b>
-    &middot; spent <b id="dthrust">0</b> mph &middot; airborne <b id="dair">0</b>s</div>
+  <div class="r">top speed <b id="dtop">0</b> mph &middot; drifting <b id="dthrust">0</b>
+    &middot; airborne <b id="dair">0</b>s</div>
   <div class="actions" style="justify-content:center">
     <button class="btn pri" id="again">run it again</button>
     <button class="btn" id="doneVen">another hill</button>
@@ -271,15 +271,15 @@
   </div>
 
   <div class="hud" id="load">
-    <div class="lbl">grip used</div>
+    <div class="lbl">grip</div>
     <div class="bar"><div class="fill" id="loadfill"></div><div class="one" style="left:62%"></div></div>
     <div class="cue" id="cue">tuck</div>
   </div>
 
   <div class="hud" id="chg">
-    <div class="top"><span class="lbl">flywheel</span><span class="n" id="chgnum">0.0s</span></div>
+    <div class="top"><span class="lbl">boost</span><span class="n" id="chgnum">0.0s</span></div>
     <div class="bar"><div class="fill" id="chgfill"></div></div>
-    <div class="cue">W &mdash; spend</div>
+    <div class="cue">SHIFT &mdash; spend</div>
   </div>
 
   <div class="hud" id="prof">
@@ -300,10 +300,10 @@
   <div class="hud" id="count"></div>
 
   <div class="hud" id="flash"><div class="n" id="flashn">+0.0</div><div class="t">pump</div></div>
-  <div class="hud" id="tip">space — tuck &middot; w — flywheel &middot; a/d — steer &middot; s — brake &middot; esc — settings</div>
+  <div class="hud" id="tip">w — go &middot; s — brake &middot; a/d — steer &middot; space — drift &middot; shift — boost</div>
 </div>
 
-<script>window.__V = '7';</script>
-<script type="module" src="./main.js?v=7"></script>
+<script>window.__V = '8';</script>
+<script type="module" src="./main.js?v=8"></script>
 </body>
 </html>
