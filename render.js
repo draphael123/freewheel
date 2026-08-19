@@ -287,6 +287,7 @@ function buildTerrain() {
   const heights = new Float32Array((nx + 1) * (nz + 1));
   const bandY  = new Float32Array((nx + 1) * (nz + 1));   // road height, not ground height
   const nearest = new Int32Array((nx + 1) * (nz + 1));   // which stretch of road owns this cell
+  const dists   = new Float32Array((nx + 1) * (nz + 1));
   for (let j = 0; j <= nz; j++) {
     for (let i = 0; i <= nx; i++) {
       const x = minX + i * CELL, z = minZ + j * CELL;
@@ -294,7 +295,7 @@ function buildTerrain() {
          mountainside the road was cut into: it follows the descent but not the
          dips, crests or the step, so the road deviates from it and the pylons
          have something to stand on. */
-      let wsum = 0, ysum = 0, bsum = 0, ssum = 0, near = 1e9, nearY = 0, nearI = 0;
+      let wsum = 0, ysum = 0, bsum = 0, ssum = 0, hsum = 0, near = 1e9, nearY = 0, nearI = 0;
       for (let ci = 0; ci < coarse.length; ci++) {
         const p = coarse[ci];
         const d2 = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
@@ -303,6 +304,7 @@ function buildTerrain() {
         wsum += w; ysum += w * p.y;
         if (p.bridge) bsum += w;
         if (p.skyroad) ssum += w;
+        if (p.zone === 'shore') hsum += w;
       }
       const d = Math.sqrt(near);
       /* Relief grows with distance from the road: graded verges close in,
@@ -332,7 +334,12 @@ function buildTerrain() {
          the road and swallowed the whole inside of every hairpin, leaving a
          billiard-table green where a mountainside should be. Rise fast, stop
          early, let the mountain take over. */
-      const cut = nearY - 2.2 + Math.max(0, d - (T.HALF_W + 2.0)) * 1.15;
+      dists[j * (nx + 1) + i] = d;
+      /* Cap how high the cut wall can climb. Unbounded, a 49-degree carve taken
+         from a pass higher up the mountain builds a hundred-metre wall right
+         beside the road lower down — which is the grey slab that fills the sky
+         at the quay. A road cut is a few metres, not a cliff. */
+      const cut = nearY - 2.2 + Math.min(Math.max(0, d - (T.HALF_W + 2.0)) * 1.15, 22);
       /* A bridge is a hole, not a cut. But it has to be a SMOOTH field: testing
          whether the single nearest road sample is a bridge put a thirty-metre
          cliff wherever that assignment flipped between adjacent cells, and the
@@ -343,10 +350,21 @@ function buildTerrain() {
          smooth weighting as the gorge so there is no cliff where the field
          changes. */
       const sky = ssum / wsum;
+      /* Drown the shore. Terrain height is a weighted mean of the ROAD's own
+         descent, so past the finish line at the waterline the hillside simply
+         kept climbing — measured at the quay, it covered the entire top of the
+         frame and reduced the sea to a slot glimpsed under the gantry. A quay
+         is the edge of the land: hold the ground up for the width of the
+         village, then take it below the waterline so the sea plane wins. */
+      const shore = hsum / wsum;
+      const drown = shore * Math.max(0, Math.min(1, (d - 52) / 70));
+      const seaFloor = T.BOT_Y - 14;
+
       heights[j * (nx + 1) + i] =
-        Math.min(smooth, cut)
-        - gorge * (26 + Math.min(d * 0.45, 22))
-        - sky * (120 + Math.min(d * 0.8, 60));
+        (Math.min(smooth, cut)
+         - gorge * (26 + Math.min(d * 0.45, 22))
+         - sky * (120 + Math.min(d * 0.8, 60))) * (1 - drown)
+        + seaFloor * drown;
       bandY[j * (nx + 1) + i] = nearY;
       nearest[j * (nx + 1) + i] = nearI;
     }
@@ -367,6 +385,8 @@ function buildTerrain() {
   });
 
   const ROCK = TH.terrain.rock;
+  const _h = new THREE.Color(TH.fog.color);
+  const hazeCol = [_h.r, _h.g, _h.b];
 
   for (let j = 0; j <= nz; j++) {
     for (let i = 0; i <= nx; i++) {
@@ -388,7 +408,16 @@ function buildTerrain() {
                   + gi(i + 1, j + 1) + gi(i - 1, j - 1)) / 6;
       const ao = 1 - Math.max(0, Math.min(0.42, (mean - y) * 0.055));
 
-      const base = zoneCol[nearest[j * (nx + 1) + i]];
+      /* Bake atmospheric perspective into the hillside by distance from the
+         road. Seen from the bottom of a 450 m descent the mountain above you is
+         300 m away and filled the sky as one flat grey slab; hazing it by
+         distance is what turns that slab back into a mountain. */
+      const raw = zoneCol[nearest[j * (nx + 1) + i]];
+      /* Only a whisper of lateral haze — this is distance from the CENTRELINE,
+         not from the eye, and on a switchbacked course those are barely related.
+         Real aerial perspective is the fog, which is view-distance based. */
+      const far = Math.min(0.22, dists[j * (nx + 1) + i] / 900);
+      const base = [0, 1, 2].map((k) => raw[k] + (hazeCol[k] - raw[k]) * far);
       const t = Math.max(0, Math.min(1, (slope - 0.62) / 0.55));
       const rk = t * t * (3 - 2 * t);
       /* Two scales of variation: fine per-vertex grain, plus a broad drift so
@@ -1176,6 +1205,168 @@ function buildFurniture(tr) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* the long view                                                              */
+/* -------------------------------------------------------------------------- */
+/* Every shot used to be road, rail, a strip of scenery, fog — a corridor two
+   and a half kilometres long. An alpine descent has to let you SEE the valley
+   you are dropping into, so this puts a sea at the bottom of the course and two
+   rings of ridgeline behind it. Both are far outside the terrain grid and cost
+   almost nothing: the sea is one quad and each ridge is a single strip. */
+/* Stepped retaining walls where the course says "terraces". Without them the
+   farm zone was just a village street with fewer houses — the name promised a
+   landform the world never delivered. Walls run parallel to the road, marching
+   up the hillside, which is what a terraced slope actually looks like. */
+function buildTerraces(tr) {
+  const wallM = new THREE.MeshLambertMaterial({ color: TH.terrace || 0x9a8b6e });
+  const pos = [], idx = [];
+  let v = 0;
+  for (let s0 = 8; s0 < T.LENGTH - 8; s0 += 4) {
+    if (T.zoneAt(s0) !== 'farm' || T.tunnelAt(s0) || T.hallAt(s0)) continue;
+    const { right, nrm } = basisAt(s0);
+    const c0 = v3(T.surfaceAt(s0, 0));
+    for (const side of [-1, 1]) {
+      for (let step = 0; step < 4; step++) {
+        const off = T.halfWAt(s0) + SHOULDER + 7 + step * 11;
+        const p = v3(T.surfaceAt(s0, side * off));
+        const gy = terrainY(tr, p.x, p.z);
+        if (gy < c0.y - 26 || gy > c0.y + 40) continue;   // not on a cliff
+        const h = 1.6 + step * 0.25;
+        const a = new THREE.Vector3(p.x, gy - 2, p.z);
+        const b = new THREE.Vector3(p.x, gy + h, p.z);
+        const n0 = right.clone().multiplyScalar(side * 0.5);
+        pos.push(a.x - n0.x, a.y, a.z - n0.z, b.x - n0.x, b.y, b.z - n0.z,
+                 b.x + n0.x, b.y, b.z + n0.z);
+        if (v > 0 && step === lastStep && side === lastSide) {
+          const q = v - 3;
+          idx.push(q, q + 1, v, q + 1, v + 1, v);
+          idx.push(q + 1, q + 2, v + 1, q + 2, v + 2, v + 1);
+        }
+        v += 3;
+        lastStep = step; lastSide = side;
+      }
+    }
+  }
+  if (!idx.length) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const m = new THREE.Mesh(g, wallM);
+  m.castShadow = true; m.receiveShadow = true;
+  courseRoot.add(m);
+}
+let lastStep = -1, lastSide = 0;
+
+/* A harbour wall and bollards where the course reaches the water, so THE QUAY
+   is a quay rather than more village street. */
+function buildQuay(tr) {
+  const wallM = new THREE.MeshLambertMaterial({ color: 0x8d8577 });
+  const bollM = new THREE.MeshLambertMaterial({ color: 0x2e3238 });
+  const boll = new THREE.CylinderGeometry(0.34, 0.42, 1.1, 8);
+  const bolls = new THREE.InstancedMesh(boll, bollM, 120);
+  bolls.castShadow = true;
+  const mtx = new THREE.Matrix4(), q = new THREE.Quaternion();
+  let nb = 0;
+  const pos = [], idx = [];
+  let v = 0, prev = false;
+  for (let s0 = 6; s0 < T.LENGTH - 6; s0 += 4) {
+    const here = T.zoneAt(s0) === 'shore';
+    if (!here) { prev = false; continue; }
+    const { right, nrm } = basisAt(s0);
+    /* Seaward side is whichever side the ground falls away on. */
+    const test = (side) => terrainY(tr, ...[0].map(() => 0)) ;
+    const side = 1;
+    const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER + 1.0)));
+    const top = c.clone().addScaledVector(nrm, 0.9);
+    const foot = new THREE.Vector3(c.x, T.BOT_Y - 12, c.z);
+    const outer = right.clone().multiplyScalar(side * 1.6);
+    pos.push(foot.x + outer.x, foot.y, foot.z + outer.z,
+             top.x + outer.x, top.y, top.z + outer.z,
+             top.x, top.y, top.z);
+    if (prev) {
+      const p2 = v - 3;
+      idx.push(p2, p2 + 1, v, p2 + 1, v + 1, v);
+      idx.push(p2 + 1, p2 + 2, v + 1, p2 + 2, v + 2, v + 1);
+    }
+    prev = true; v += 3;
+    if (nb < 120 && (Math.round(s0) % 16 === 0)) {
+      mtx.compose(top.clone().addScaledVector(nrm, 0.55).addScaledVector(right, side * 0.9),
+                  q, new THREE.Vector3(1, 1, 1));
+      bolls.setMatrixAt(nb++, mtx);
+    }
+  }
+  if (idx.length) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, wallM);
+    m.castShadow = true; m.receiveShadow = true;
+    courseRoot.add(m);
+  }
+  bolls.count = nb;
+  if (nb) courseRoot.add(bolls);
+}
+
+function buildHorizon() {
+  const mid = v3(T.surfaceAt(T.LENGTH * 0.5, 0));
+  const seaY = T.BOT_Y - 10;
+
+  const sea = new THREE.Mesh(
+    new THREE.PlaneGeometry(9000, 9000).rotateX(-Math.PI / 2),
+    new THREE.MeshLambertMaterial({ color: TH.sea }));
+  sea.position.set(mid.x, seaY, mid.z);
+  sea.receiveShadow = false;
+  courseRoot.add(sea);
+
+  /* Ridgelines as a strip: walk a circle, emit a foot and a peak at each step,
+     and let noise decide the peak height. Atmospheric perspective is baked into
+     the vertex colours so the far ring still reads as far even where the fog
+     has not reached it. */
+  const base = new THREE.Color(TH.ridge[0], TH.ridge[1], TH.ridge[2]);
+  const haze = new THREE.Color(TH.fog.color);
+  /* Peak altitudes are ABSOLUTE, not heights above the sea. The course drops
+     450 m, so ridges specified as "300 tall" from the waterline topped out
+     below the road and were invisible from anywhere on the mountain. They have
+     to tower over the whole descent to read as the far side of a valley. */
+  for (const [radius, peak, spread, steps, mix] of
+  /* Haze hard. These are seen from the top of a 450 m descent AND from the
+     bottom of it — from down at the quay a ridge 1150 m out subtends 24 degrees
+     and a lightly-hazed one reads as a dark wall across the sky rather than as
+     distance. Atmospheric perspective is not a subtle effect at this scale. */
+       [[640,  T.TOP_Y + 20,  150, 150, 0.55],
+        [880,  T.TOP_Y + 90,  210, 110, 0.72],
+        [1150, T.TOP_Y + 170, 270, 80,  0.86]]) {
+    const pos = [], col = [], idx = [];
+    const c = base.clone().lerp(haze, mix);
+    const lo = base.clone().lerp(haze, Math.min(1, mix + 0.18));
+    for (let i = 0; i <= steps; i++) {
+      const a = (i / steps) * Math.PI * 2;
+      const x = mid.x + Math.cos(a) * radius, z = mid.z + Math.sin(a) * radius;
+      const n = fbm(Math.cos(a) * radius / 260, Math.sin(a) * radius / 260)
+              + fbm(Math.cos(a) * radius / 90, Math.sin(a) * radius / 90) * 0.45;
+      const top = peak + n * spread;
+      pos.push(x, seaY - 60, z, x, top, z);
+      col.push(lo.r, lo.g, lo.b, c.r, c.g, c.b);
+      if (i > 0) {
+        const q = (i - 1) * 2, v = i * 2;
+        idx.push(q, q + 1, v, q + 1, v + 1, v);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
+      vertexColors: true, side: THREE.DoubleSide, fog: true,
+    }));
+    m.renderOrder = 0;
+    courseRoot.add(m);
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* sky                                                                        */
 /* -------------------------------------------------------------------------- */
 /* A vertex-coloured dome rather than a flat clear colour. Two things it buys:
@@ -1184,7 +1375,7 @@ function buildFurniture(tr) {
    vertex colours because the sun never moves, so a shader would be a cost with
    no benefit. */
 function buildSky() {
-  const g = new THREE.SphereGeometry(600, 32, 20);
+  const g = new THREE.SphereGeometry(4200, 40, 24);
   const p = g.attributes.position;
   const col = new Float32Array(p.count * 3);
   const ZEN = TH.sky.zenith, HOR = TH.sky.horizon, GND = TH.sky.ground;
@@ -1193,7 +1384,10 @@ function buildSky() {
     v.fromBufferAttribute(p, i).normalize();
     let c;
     if (v.y >= 0) {
-      const t = Math.pow(Math.min(1, v.y / 0.55), 0.8);
+      /* A daytime sky is mostly the pale band near the horizon; the deep
+         colour only arrives well overhead. Reaching the zenith by 0.55 of the
+         way up made the sky read as dusk once the fog stopped hiding it. */
+      const t = Math.pow(Math.min(1, v.y / 0.92), 1.15);
       c = [0, 1, 2].map((k) => HOR[k] + (ZEN[k] - HOR[k]) * t);
     } else {
       const t = Math.min(1, -v.y / 0.35);
@@ -1203,11 +1397,11 @@ function buildSky() {
        by noise, so they read as weather rather than as a gradient — and they
        cannot pop, drift or cost a draw call. */
     if (v.y > 0.04) {
-      const band = Math.max(0, 1 - Math.abs(v.y - 0.42) / 0.32);
+      const band = Math.max(0, 1 - Math.abs(v.y - 0.34) / 0.46);
       const f = fbm(v.x * 3.4 + 9.1, v.z * 3.4 - 4.3)
               + fbm(v.x * 9.0, v.z * 9.0) * 0.45;
-      const cloud = Math.max(0, Math.min(1, (f + 0.02) * 1.9)) * band;
-      c = [0, 1, 2].map((k) => c[k] + (0.88 - c[k]) * cloud * 0.42);
+      const cloud = Math.max(0, Math.min(1, (f + 0.06) * 2.6)) * band;
+      c = [0, 1, 2].map((k) => c[k] + (0.97 - c[k]) * cloud * 0.78);
     }
 
     const glow = Math.pow(Math.max(0, v.dot(SUN_DIR)), TH.sky.glowPow) * 1.1;
@@ -1221,6 +1415,16 @@ function buildSky() {
   }));
   sky.renderOrder = -1;
   scene.add(sky);
+
+  /* A visible sun. The lighting has had a direction all along and the sky never
+     showed where it was. */
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(90, 24),
+    new THREE.MeshBasicMaterial({ color: 0xfff3d4, fog: false,
+                                  transparent: true, opacity: 0.92 }));
+  disc.position.copy(SUN_DIR).multiplyScalar(3600);
+  disc.lookAt(0, 0, 0);
+  disc.renderOrder = -1;
+  sky.add(disc);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1474,19 +1678,22 @@ export function init(canvas) {
   fog = new THREE.Fog(0xc7bda9, CAM_DIST - 40, CAM_DIST + 290);
   scene.fog = fog;
 
-  camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 900);
+  /* Far plane out at 6 km. It was 900, which clipped every ridgeline out of
+     existence — the long view was being built and then thrown away by the
+     projection. Near pushed to 0.8 to buy back some depth precision. */
+  camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 6000);
   /* A second camera rather than a mode flag on one: an ortho and a
      perspective camera disagree about almost every property. */
-  persp = new THREE.PerspectiveCamera(62, 1, 0.4, 900);
+  persp = new THREE.PerspectiveCamera(62, 1, 0.8, 6000);
 
   /* One warm key raking across the slope and one cool sky fill. Long shadows
      describe the shape of ground that flat shading leaves ambiguous, and two
      colours of light is the whole lighting model. */
   sun = new THREE.DirectionalLight(0xffd7a4, 2.0);
   sun.castShadow = true;
-  sun.shadow.mapSize.set(2048, 2048);
-  sun.shadow.camera.left = -80; sun.shadow.camera.right = 80;
-  sun.shadow.camera.top = 80; sun.shadow.camera.bottom = -80;
+  sun.shadow.mapSize.set(3072, 3072);
+  sun.shadow.camera.left = -140; sun.shadow.camera.right = 140;
+  sun.shadow.camera.top = 140; sun.shadow.camera.bottom = -140;
   sun.shadow.camera.near = 1; sun.shadow.camera.far = 420;
   sun.shadow.bias = -0.0006;
   sun.shadow.normalBias = 0.6;
@@ -1494,6 +1701,13 @@ export function init(canvas) {
 
   hemi = new THREE.HemisphereLight(0x9dc0e2, 0x5c5240, 1.15);
   scene.add(hemi);
+
+  /* A small ambient floor. Hemisphere light gives a near-vertical face pointing
+     away from the sun only the equator mix, which measured at RGB 46,47,47 on
+     the valley wall at the quay — a black cutout where a mountain should be.
+     Ambient is the cheapest way to stop unlit faces crushing, and because the
+     lit surfaces are already well above it, it costs very little contrast. */
+  scene.add(new THREE.AmbientLight(0xb8c4d0, 0.55));
 
   buildCues();
   buildDust();
@@ -1545,6 +1759,9 @@ export function build() {
   buildFurniture(tr);
   buildCloudDeck();
   buildHalls();
+  buildTerraces(tr);
+  buildQuay(tr);
+  buildHorizon();
 
   /* Rebuild the cart rather than reaching into it to repaint. The old code
      poked cart.children[0].material, which stopped being a Mesh the moment the
@@ -1728,9 +1945,17 @@ export function frame(S, dt) {
      different distances — 220 units back for the ortho, ten for the chase. A
      single near/far either fogs everything or nothing. */
   if (opts.haze) {
+    /* Pushed a long way out. At 330 the fog was a wall three hundred metres
+       ahead and there was no middle distance at all — the course played as a
+       corridor. The ridges bake their own atmospheric perspective, so fog only
+       has to soften what is genuinely far. */
     const off = view === 'iso' ? CAM_DIST : 0;
-    fog.near = off + (view === 'iso' ? TH.fog.near : 55);
-    fog.far = off + (view === 'iso' ? TH.fog.far : 330);
+    fog.near = off + (view === 'iso' ? TH.fog.near : 45);
+    /* 1000, not 2400. Measured at the quay: the valley wall 336 m out came back
+       at RGB 46,47,47 — a black cutout — because at far=2400 it was only 10%
+       hazed. Aerial perspective is the ONLY cue that separates a mountainside
+       from a wall, and it has to be strong enough to see. */
+    fog.far = off + (view === 'iso' ? TH.fog.far * 3.2 : 1000);
   }
   const { tan: ctan, nrm: cnrm } = basisAt(S.s);
   let active = camera, tgt;
