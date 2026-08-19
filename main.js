@@ -44,6 +44,8 @@ function loadOpts() {
 function saveOpts() {
   localStorage.setItem(SAVED, JSON.stringify(R.opts));
   localStorage.setItem('fw.res', String(res));
+  localStorage.setItem('fw.diff', RACE.difficulty);
+  localStorage.setItem('fw.view', R.getView());
 }
 function syncSettingsUI() {
   document.querySelectorAll('[data-opt]').forEach((row) => {
@@ -51,6 +53,12 @@ function syncSettingsUI() {
   });
   document.querySelectorAll('#resSeg button').forEach((b) => {
     b.classList.toggle('on', +b.dataset.res === res);
+  });
+  document.querySelectorAll('#diffSeg button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.diff === RACE.difficulty);
+  });
+  document.querySelectorAll('#viewSeg button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.view === R.getView());
   });
 }
 document.querySelectorAll('[data-opt]').forEach((row) => {
@@ -62,7 +70,15 @@ document.querySelectorAll('[data-opt]').forEach((row) => {
 document.querySelectorAll('#resSeg button').forEach((b) => {
   b.addEventListener('click', () => { res = +b.dataset.res; R.setRes(res); syncSettingsUI(); saveOpts(); });
 });
+document.querySelectorAll('#diffSeg button').forEach((b) => {
+  b.addEventListener('click', () => { RACE.setDifficulty(b.dataset.diff); syncSettingsUI(); saveOpts(); });
+});
+document.querySelectorAll('#viewSeg button').forEach((b) => {
+  b.addEventListener('click', () => { R.setView(b.dataset.view); syncSettingsUI(); saveOpts(); });
+});
 loadOpts();
+RACE.setDifficulty(localStorage.getItem('fw.diff') || 'normal');
+R.setView(localStorage.getItem('fw.view') || 'iso');
 R.setRes(res);
 syncSettingsUI();
 
@@ -149,6 +165,11 @@ addEventListener('keydown', (e) => {
   }
   if (k === 'r') startRun();
   if (k === 'v') show('venues');
+  if (k === 'c') {
+    const i = R.VIEWS.indexOf(R.getView());
+    R.setView(R.VIEWS[(i + 1) % R.VIEWS.length]);
+    saveOpts();
+  }
 });
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => keys.clear());

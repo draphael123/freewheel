@@ -77,6 +77,25 @@ Three of those are places rather than corners: **THE SPAN** refuses the terrain
 carve so the ground drops away and the road is a bridge, **THE ADIT** is a
 tunnel, and **THE VILLAGE** is a street with houses hard against both verges.
 
+## Views and difficulty
+
+Three cameras, cycled with `C` or set in Settings:
+
+- **ISO** — the fixed orthographic view the readability work was built for
+- **CHASE** — perspective, behind and above, lagging on a spring so the cart
+  leads the camera through a corner rather than the other way round
+- **COCKPIT** — the rider's eyeline, parented to the cart so it inherits the
+  body roll, which is most of what makes it feel like driving
+
+Two cameras rather than one with a mode flag: an orthographic and a perspective
+camera disagree about almost every property, including how fog reads — the
+ortho sits 220 units back and the chase sits ten, so a single near/far either
+fogs everything or nothing.
+
+Opponents run at **Easy / Normal / Hard / Brutal**, which scales both their pace
+handicap and how close to the limit they are willing to run. Easy is not a
+slower race, it is one you are more likely to win.
+
 ## The look
 
 Everything here is derived from the centreline, so it costs nothing per course:
@@ -183,6 +202,14 @@ Physics numbers came out of `FW.sim()`, not out of taste:
 - **And the reference driver was over-cautious.** Lifting at 0.85 of the grip
   limit lost to flat-out; lifting at 1.35 gains three seconds in a hundred with
   no spins. Swept, not guessed.
+- **A binary test across a smooth field makes cliffs.** THE SPAN drops the
+  terrain 30 m wherever the NEAREST road sample is a bridge, and the course
+  doubles back enough that the assignment flipped between adjacent cells
+  constantly — the hillside grew a row of giant vertical slabs. Weight it like
+  the height and the gorge becomes a gorge.
+- **A four-sided pyramid seen from above is a diamond.** A street of them read
+  as a rash of red lozenges, not houses. Gabled roofs with a ridge, and a cursor
+  per side of the street so buildings stop growing through one another.
 - **A tunnel on a fixed iso camera is unplayable.** The roof hides the road,
   the cart and every rival under it. The ceiling is its own mesh so it can fade
   out while you are inside and close again behind you.

@@ -204,6 +204,24 @@
   <div class="title" style="font-size:22px">SETTINGS</div>
   <div class="rule"></div>
 
+  <div class="grp"><h3>race</h3>
+    <div class="row" style="cursor:default"><div><div class="rn">Opponents</div>
+      <div class="rd">How hard the field runs</div></div>
+      <div class="seg3" id="diffSeg">
+        <button data-diff="easy">easy</button>
+        <button data-diff="normal">normal</button>
+        <button data-diff="hard">hard</button>
+        <button data-diff="brutal">brutal</button>
+      </div></div>
+    <div class="row" style="cursor:default"><div><div class="rn">Camera</div>
+      <div class="rd">C cycles it mid-race</div></div>
+      <div class="seg3" id="viewSeg">
+        <button data-view="iso">iso</button>
+        <button data-view="chase">chase</button>
+        <button data-view="cockpit">cockpit</button>
+      </div></div>
+  </div>
+
   <div class="grp"><h3>readability cues</h3>
     <div class="row" data-opt="shadow"><div><div class="rn">Contact shadow &amp; landing ring</div>
       <div class="rd">Where you are, and where you will come down</div></div><div class="sw"></div></div>
@@ -300,10 +318,10 @@
   <div class="hud" id="count"></div>
 
   <div class="hud" id="flash"><div class="n" id="flashn">+0.0</div><div class="t">pump</div></div>
-  <div class="hud" id="tip">w — go &middot; s — brake &middot; a/d — steer &middot; space — drift &middot; shift — boost</div>
+  <div class="hud" id="tip">w — go &middot; s — brake &middot; a/d — steer &middot; space — drift &middot; shift — boost &middot; c — camera</div>
 </div>
 
-<script>window.__V = '8';</script>
-<script type="module" src="./main.js?v=8"></script>
+<script>window.__V = '9';</script>
+<script type="module" src="./main.js?v=9"></script>
 </body>
 </html>

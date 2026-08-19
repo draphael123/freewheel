@@ -56,13 +56,28 @@ export const RIVALS = [
 ];
 
 
+/* Difficulty scales the field's pace handicap and how close to the limit the
+   rivals are willing to run. Easy is not a slower race, it is a race you are
+   more likely to win — the leader is still a leader. */
+export const DIFFICULTY = {
+  easy:   { label: 'Easy',   pace: 1.14, nerve: -0.14 },
+  normal: { label: 'Normal', pace: 1.00, nerve: 0.00 },
+  hard:   { label: 'Hard',   pace: 0.90, nerve: 0.10 },
+  brutal: { label: 'Brutal', pace: 0.83, nerve: 0.18 },
+};
+export let difficulty = 'normal';
+export const setDifficulty = (d) => { difficulty = DIFFICULTY[d] ? d : 'normal'; };
+
 export function createField() {
   const carts = [];
   const n = RIVALS.length + 1;
 
   RIVALS.forEach((r, i) => {
     const c = SIM.create();
-    c.name = r.name; c.color = r.color; c.ai = { ...r }; c.pace = r.pace;
+    const D = DIFFICULTY[difficulty];
+    c.name = r.name; c.color = r.color;
+    c.ai = { ...r, skill: Math.max(0.3, Math.min(1, r.skill + D.nerve)) };
+    c.pace = r.pace * D.pace;
     c.isPlayer = false;
     carts.push(c);
   });

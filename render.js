@@ -33,13 +33,18 @@ export function setRes(scale) {
   resize();
 }
 
-let renderer, scene, camera, cart, rider, blob, reticle, tether, sun, hemi, fog;
+let renderer, scene, camera, persp, cart, rider, blob, reticle, tether, sun, hemi, fog;
+export const VIEWS = ['iso', 'chase', 'cockpit'];
+let view = 'iso';
+export const setView = (v) => { view = VIEWS.includes(v) ? v : 'iso'; resize(); };
+export const getView = () => view;
 let sky, dust, dustP = [], shakeT = 0;
 let courseRoot, TH = THEME.get('alpine');
 let rivalCarts = [], tunnelRoofs = [];
 const hex = (c) => new THREE.Color(c[0], c[1], c[2]);
 let roadMesh, roadPlain, roadTint, pylons, postGroup, treeGroup;
 let camYaw = 0, camYawTarget = 0, camSize = 46;
+const chasePos = new THREE.Vector3();
 
 const UP = new THREE.Vector3(0, 1, 0);
 const CAM_PITCH = 40 * Math.PI / 180;   // steeper than a classic 2:1 iso, so
@@ -289,13 +294,13 @@ function buildTerrain() {
          mountainside the road was cut into: it follows the descent but not the
          dips, crests or the step, so the road deviates from it and the pylons
          have something to stand on. */
-      let wsum = 0, ysum = 0, near = 1e9, nearY = 0, nearI = 0;
+      let wsum = 0, ysum = 0, bsum = 0, near = 1e9, nearY = 0, nearI = 0;
       for (let ci = 0; ci < coarse.length; ci++) {
         const p = coarse[ci];
         const d2 = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
         if (d2 < near) { near = d2; nearY = p.y; nearI = ci; }
         const w = Math.exp(-d2 / SIG2);
-        wsum += w; ysum += w * p.y;
+        wsum += w; ysum += w * p.y; if (p.bridge) bsum += w;
       }
       const d = Math.sqrt(near);
       /* Relief grows with distance from the road: graded verges close in,
@@ -326,11 +331,14 @@ function buildTerrain() {
          billiard-table green where a mountainside should be. Rise fast, stop
          early, let the mountain take over. */
       const cut = nearY - 2.2 + Math.max(0, d - (T.HALF_W + 2.0)) * 1.15;
-      /* A bridge is a hole, not a cut: refuse to carve a channel under the road
-         and drop the ground away instead, so THE SPAN reads as a span. */
-      heights[j * (nx + 1) + i] = coarse[nearI].bridge
-        ? Math.min(smooth, nearY - 30 - Math.min(d * 0.5, 26))
-        : Math.min(smooth, cut);
+      /* A bridge is a hole, not a cut. But it has to be a SMOOTH field: testing
+         whether the single nearest road sample is a bridge put a thirty-metre
+         cliff wherever that assignment flipped between adjacent cells, and the
+         course doubles back enough that it did so constantly — the hillside
+         grew a row of giant vertical slabs. Weight it like the height. */
+      const gorge = bsum / wsum;
+      heights[j * (nx + 1) + i] =
+        Math.min(smooth, cut) - gorge * (26 + Math.min(d * 0.45, 22));
       bandY[j * (nx + 1) + i] = nearY;
       nearest[j * (nx + 1) + i] = nearI;
     }
@@ -560,25 +568,52 @@ function buildProps(tr) {
 /* Houses, close to the road, in the zones that have any. They are the other
    half of the proximity problem the gantries and bunting started on: nothing
    sells speed like a wall two metres off your shoulder. */
+/* A gabled roof: a ridge running along the building, not a pyramid. Seen from
+   forty degrees above, a four-sided pyramid is a diamond, and a street of them
+   reads as a rash of red lozenges rather than as houses. Unit footprint, ridge
+   along +Z, so it instances against the same transform as the walls. */
+function gableGeometry() {
+  const v = [
+    -0.5, 0, -0.5,  0.5, 0, -0.5,  0.5, 0, 0.5,  -0.5, 0, 0.5,   // eaves
+    0, 1, -0.55,    0, 1, 0.55,                                   // ridge
+  ];
+  const idx = [
+    0, 4, 5, 0, 5, 3,       // left slope
+    1, 2, 5, 1, 5, 4,       // right slope
+    0, 1, 4,                // front gable
+    3, 5, 2,                // back gable
+  ];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 function buildBuildings(tr, mtx, q) {
   const wallG = new THREE.BoxGeometry(1, 1, 1);
-  const roofG = new THREE.ConeGeometry(0.78, 0.5, 4);
+  const roofG = gableGeometry();
   const cols = TH.bld;
-  const CAP = 220;
+  const CAP = 200;
   const walls = cols.map((c) => new THREE.InstancedMesh(wallG,
     new THREE.MeshLambertMaterial({ color: c }), CAP));
   const roofs = new THREE.InstancedMesh(roofG,
-    new THREE.MeshLambertMaterial({ color: TH.roof, flatShading: true }), CAP * cols.length);
+    new THREE.MeshLambertMaterial({ color: TH.roof, flatShading: true,
+                                    side: THREE.DoubleSide }), CAP * cols.length);
+  const plinths = new THREE.InstancedMesh(wallG,
+    new THREE.MeshLambertMaterial({ color: 0x4c4740 }), CAP * cols.length);
   walls.forEach((w) => { w.castShadow = w.receiveShadow = true; });
-  roofs.castShadow = true;
+  roofs.castShadow = true; plinths.receiveShadow = true;
   const n = cols.map(() => 0);
   let nr = 0;
 
   /* WALK the building zones rather than sampling the whole course at random.
      Uniform sampling put 394 houses across 2.4 km, which is six within sight of
      the village street and reads as open ground with the odd shed. A street is
-     a density, so it has to be authored as one. */
-  for (let s0 = 8; s0 < T.LENGTH - 8; s0 += 5) {
+     a density, so it has to be authored as one — and the walk also lets each
+     side keep a cursor, so houses stop growing through one another. */
+  const nextFree = { '-1': -99, '1': -99 };
+  for (let s0 = 8; s0 < T.LENGTH - 8; s0 += 2.5) {
     const Z = TH.zones[T.zoneAt(s0)] || TH.zones.forest;
     if (!Z.blds || T.tunnelAt(s0) || T.bridgeAt(s0)) continue;
     const { nrm, tan } = basisAt(s0);
@@ -586,15 +621,16 @@ function buildBuildings(tr, mtx, q) {
       new THREE.Vector3().crossVectors(nrm, tan).normalize(), nrm,
       tan.clone().normalize()));
     for (const side of [-1, 1]) {
-      if (Math.random() > Z.blds * 0.5) continue;
-      const off = T.halfWAt(s0) + SHOULDER + 1.2 + Math.random() * 7;
-      const c = T.surfaceAt(s0, side * off);
-      const gy = terrainY(tr, c.x, c.z);
+      if (s0 < nextFree[side]) continue;                 // still inside the last one
+      if (Math.random() > Z.blds * 0.55) continue;
       const k = Math.floor(Math.random() * cols.length);
       if (n[k] >= CAP) continue;
-      const w = 4.2 + Math.random() * 4.0;
-      const d = 4.2 + Math.random() * 4.0;
-      const h = 4.0 + Math.random() * 6.0;
+      const w = 4.4 + Math.random() * 3.2;               // across the street
+      const d = 5.0 + Math.random() * 3.5;               // along it
+      const h = 4.0 + Math.random() * 5.0;
+      const off = T.halfWAt(s0) + SHOULDER + 1.4 + w * 0.5 + Math.random() * 3.5;
+      const c = T.surfaceAt(s0, side * off);
+      const gy = terrainY(tr, c.x, c.z);
       /* Stand them UP from the slope. Sitting every house on raw terrain put
          the village ten metres below an embanked road, where the embankment
          hid it — and made-up ground against the street is how hill villages
@@ -602,17 +638,18 @@ function buildBuildings(tr, mtx, q) {
       const base = new THREE.Vector3(c.x, Math.max(gy, c.y - 2.5), c.z);
       mtx.compose(base.clone().addScaledVector(nrm, h / 2), q, new THREE.Vector3(w, h, d));
       walls[k].setMatrixAt(n[k]++, mtx);
-      /* ConeGeometry's radius is 0.78, so scaling by w*1.5 gave a roof 2.3x
-         the width of the house it sat on and the village rendered as a solid
-         raft of red diamonds. Aim for a modest overhang instead. */
-      mtx.compose(base.clone().addScaledVector(nrm, h + w * 0.225), q,
-                  new THREE.Vector3(w * 0.95, w * 0.90, d * 0.95));
+      mtx.compose(base.clone().addScaledVector(nrm, 0.55), q,
+                  new THREE.Vector3(w * 1.06, 1.1, d * 1.06));
+      plinths.setMatrixAt(nr, mtx);
+      mtx.compose(base.clone().addScaledVector(nrm, h), q,
+                  new THREE.Vector3(w * 1.14, w * 0.42, d * 1.06));
       roofs.setMatrixAt(nr++, mtx);
+      nextFree[side] = s0 + d + 1.2 + Math.random() * 2.5;
     }
   }
   walls.forEach((w, k) => { w.count = n[k]; courseRoot.add(w); });
-  roofs.count = nr;
-  courseRoot.add(roofs);
+  roofs.count = nr; plinths.count = nr;
+  courseRoot.add(roofs, plinths);
 }
 
 /* A roof over the road. The only place on the course where the sky goes away,
@@ -681,6 +718,116 @@ function buildTunnels() {
    which is why 55 mph read as a stroll no matter what the number said. Gantries
    pass directly overhead, bunting runs a metre off your shoulder, and bales sit
    on the road itself. */
+/* Set pieces. A course needs things you can name — a start you leave, a finish
+   you arrive at, and one landmark per zone tall enough to see coming. */
+function buildSetPieces(tr) {
+  const dark = new THREE.MeshLambertMaterial({ color: 0x3a352f });
+  const pale = new THREE.MeshLambertMaterial({ color: 0xe6e0d2 });
+
+  /* Chequered bands across the road at both ends. */
+  const chequer = (s0, squares) => {
+    const w = T.halfWAt(s0);
+    const { right, nrm } = basisAt(s0);
+    const c = v3(T.surfaceAt(s0, 0)).addScaledVector(nrm, 0.055);
+    for (let i = 0; i < squares; i++) {
+      for (let r = 0; r < 2; r++) {
+        const m = new THREE.Mesh(new THREE.PlaneGeometry((2 * w) / squares, 1.1),
+          ((i + r) % 2) ? pale : dark);
+        m.position.copy(c)
+          .addScaledVector(right, -w + (2 * w) * (i + 0.5) / squares)
+          .addScaledVector(basisAt(s0).tan, r * 1.1);
+        m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), nrm);
+        courseRoot.add(m);
+      }
+    }
+  };
+  chequer(6, 10);
+  chequer(T.LENGTH - 10, 10);
+
+  /* A gantry you leave from and one you arrive at, taller than the roadside
+     ones so they read as events rather than furniture. */
+  const arch = (s0, label) => {
+    const w = T.halfWAt(s0) + SHOULDER + 1.2, H = 8.4;
+    const { right, nrm, tan } = basisAt(s0);
+    const c = v3(T.surfaceAt(s0, 0));
+    const B = new THREE.Matrix4().makeBasis(
+      new THREE.Vector3().crossVectors(nrm, tan).normalize(), nrm,
+      tan.clone().normalize());
+    for (const side of [-1, 1]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.55, H, 0.55), dark);
+      p.position.copy(c).addScaledVector(right, side * w).addScaledVector(nrm, H / 2);
+      p.castShadow = true;
+      courseRoot.add(p);
+    }
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(w * 2 + 0.8, 1.5, 0.6), dark);
+    beam.position.copy(c).addScaledVector(nrm, H - 0.4);
+    beam.quaternion.setFromRotationMatrix(B);
+    beam.castShadow = true;
+    courseRoot.add(beam);
+    /* Start lights / finish flags along the beam. */
+    for (let i = -2; i <= 2; i++) {
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6),
+        new THREE.MeshBasicMaterial({ color: label ? 0xd8482e : 0xe8e2d4 }));
+      bulb.position.copy(c).addScaledVector(nrm, H - 1.3)
+        .addScaledVector(right, i * (w * 0.42));
+      courseRoot.add(bulb);
+    }
+  };
+  arch(10, true);
+  arch(T.LENGTH - 14, false);
+
+  /* One landmark per zone that has one: a church in the village, a lighthouse
+     on the quay, a lift pylon on the snowfield. */
+  const landmark = (s0, side, build) => {
+    if (s0 <= 0 || s0 >= T.LENGTH) return;
+    const { nrm, tan } = basisAt(s0);
+    const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER + 12)));
+    const gy = terrainY(tr, c.x, c.z);
+    const base = new THREE.Vector3(c.x, Math.max(gy, c.y - 3), c.z);
+    const q = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      new THREE.Vector3().crossVectors(nrm, tan).normalize(), nrm,
+      tan.clone().normalize()));
+    build(base, nrm, q);
+  };
+
+  const zoneStart = (name) => {
+    for (let s0 = 0; s0 < T.LENGTH; s0 += 4) if (T.zoneAt(s0) === name) return s0;
+    return -1;
+  };
+
+  const vs = zoneStart('village');
+  landmark(vs > 0 ? vs + 120 : -1, -1, (base, nrm, q) => {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(8, 11, 12),
+      new THREE.MeshLambertMaterial({ color: 0xd8d0bc }));
+    body.position.copy(base).addScaledVector(nrm, 5.5); body.castShadow = true;
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(4.6, 20, 4.6),
+      new THREE.MeshLambertMaterial({ color: 0xcac2ae }));
+    tower.position.copy(base).addScaledVector(nrm, 10).addScaledVector(
+      new THREE.Vector3(1, 0, 0).applyQuaternion(q), 5.5);
+    tower.castShadow = true;
+    const spire = new THREE.Mesh(new THREE.ConeGeometry(3.4, 9, 4),
+      new THREE.MeshLambertMaterial({ color: TH.roof, flatShading: true }));
+    spire.position.copy(tower.position).addScaledVector(nrm, 14.5);
+    spire.quaternion.copy(q); spire.castShadow = true;
+    body.quaternion.copy(q); tower.quaternion.copy(q);
+    courseRoot.add(body, tower, spire);
+  });
+
+  const qs = zoneStart('shore');
+  landmark(qs > 0 ? qs + 90 : -1, 1, (base, nrm, q) => {
+    const t = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.4, 22, 10),
+      new THREE.MeshLambertMaterial({ color: 0xe4ded0 }));
+    t.position.copy(base).addScaledVector(nrm, 11); t.castShadow = true;
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 3, 10),
+      new THREE.MeshLambertMaterial({ color: 0xc2452e }));
+    cap.position.copy(base).addScaledVector(nrm, 23.4); cap.castShadow = true;
+    const lamp = new THREE.Mesh(new THREE.SphereGeometry(1.5, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xffe9a8 }));
+    lamp.position.copy(base).addScaledVector(nrm, 23.4);
+    courseRoot.add(t, cap, lamp);
+  });
+}
+
 function buildBarriers() {
   /* A CONTINUOUS rail down both verges. Sparse posts left the road edge as a
      dotted suggestion; an unbroken line at knee height reads as a boundary from
@@ -920,11 +1067,11 @@ function buildSky() {
        by noise, so they read as weather rather than as a gradient — and they
        cannot pop, drift or cost a draw call. */
     if (v.y > 0.04) {
-      const band = Math.max(0, 1 - Math.abs(v.y - 0.30) / 0.30);
+      const band = Math.max(0, 1 - Math.abs(v.y - 0.42) / 0.32);
       const f = fbm(v.x * 3.4 + 9.1, v.z * 3.4 - 4.3)
               + fbm(v.x * 9.0, v.z * 9.0) * 0.45;
-      const cloud = Math.max(0, Math.min(1, (f + 0.22) * 2.4)) * band;
-      c = [0, 1, 2].map((k) => c[k] + (0.92 - c[k]) * cloud * 0.72);
+      const cloud = Math.max(0, Math.min(1, (f + 0.02) * 1.9)) * band;
+      c = [0, 1, 2].map((k) => c[k] + (0.88 - c[k]) * cloud * 0.42);
     }
 
     const glow = Math.pow(Math.max(0, v.dot(SUN_DIR)), TH.sky.glowPow) * 1.1;
@@ -1145,6 +1292,9 @@ export function init(canvas) {
   scene.fog = fog;
 
   camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 900);
+  /* A second camera rather than a mode flag on one: an ortho and a
+     perspective camera disagree about almost every property. */
+  persp = new THREE.PerspectiveCamera(62, 1, 0.4, 900);
 
   /* One warm key raking across the slope and one cool sky fill. Long shadows
      describe the shape of ground that flat shading leaves ambiguous, and two
@@ -1208,6 +1358,7 @@ export function build() {
   buildProps(tr);
   buildBarriers();
   buildMarks();
+  buildSetPieces(tr);
   buildFurniture(tr);
 
   /* Rebuild the cart rather than reaching into it to repaint. The old code
@@ -1218,8 +1369,9 @@ export function build() {
   rider = cart.userData.rider;
   dust.material.color.set(TH.dust);
 
-  camSize = 54;
+  camSize = 46;
   camYaw = camYawTarget = T.headAt(0);
+  chasePos.set(0, 0, 0);
 }
 
 export function resize() {
@@ -1233,6 +1385,9 @@ function applyCamSize(size) {
   camera.left = -size * a / 2; camera.right = size * a / 2;
   camera.top = size / 2; camera.bottom = -size / 2;
   camera.updateProjectionMatrix();
+  persp.aspect = a;
+  persp.fov = view === 'cockpit' ? 74 : 62;
+  persp.updateProjectionMatrix();
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1370,45 +1525,81 @@ export function frame(S, dt) {
   if (attr.array !== want) { attr.array.set(want); attr.needsUpdate = true; }
 
   /* ---- camera ----------------------------------------------------------- */
-  /* Yaw follows the road CONTINUOUSLY and slowly. It used to snap to eight
-     compass points, which frames a straight nicely and is miserable on a
-     course with sixteen corners: every turn fired a re-frame and the whole
-     view lurched. Smooth and lazy beats composed and jerky. */
-  const desired = T.headAt(Math.min(T.LENGTH - 1, S.s + 22));
-  let e = desired - camYaw;
-  while (e > Math.PI) e -= 2 * Math.PI;
-  while (e < -Math.PI) e += 2 * Math.PI;
-  camYaw += e * Math.min(1, dt * 1.5);
+  /* Fog is measured from the camera, and the two cameras sit at wildly
+     different distances — 220 units back for the ortho, ten for the chase. A
+     single near/far either fogs everything or nothing. */
+  if (opts.haze) {
+    const off = view === 'iso' ? CAM_DIST : 0;
+    fog.near = off + (view === 'iso' ? TH.fog.near : 55);
+    fog.far = off + (view === 'iso' ? TH.fog.far : 330);
+  }
+  const { tan: ctan, nrm: cnrm } = basisAt(S.s);
+  let active = camera, tgt;
 
-  /* Look ahead of the cart so it sits low in frame. On a fixed iso camera the
-     sightline is short and the cart must never be centred, or the player is
-     reacting to road they can barely see. */
-  const lead = 15 + S.v * 0.75;
-  const ahead = v3(T.surfaceAt(Math.min(T.LENGTH, S.s + lead), S.u * 0.5));
-  const tgt = pos.clone().lerp(ahead, 0.62);
+  if (view === 'iso') {
+    /* Yaw follows the road CONTINUOUSLY and slowly. It used to snap to eight
+       compass points, which frames a straight nicely and is miserable on a
+       course with sixteen corners: every turn fired a re-frame and the whole
+       view lurched. */
+    const desired = T.headAt(Math.min(T.LENGTH - 1, S.s + 22));
+    let e = desired - camYaw;
+    while (e > Math.PI) e -= 2 * Math.PI;
+    while (e < -Math.PI) e += 2 * Math.PI;
+    camYaw += e * Math.min(1, dt * 1.5);
 
-  /* Widening the road is pointless if the view widens with it — the road has
-     to occupy MORE of the frame, not the same fraction of a bigger one. The
-     boost punches IN rather than out: a camera that tightens under power is
-     the oldest trick for selling acceleration and it still works. */
-  const punch = (S.input && S.input.boost && S.charge > 0.02) ? -4.0 : 0;
-  camSize += ((46 + S.v * 0.50 + punch) - camSize) * Math.min(1, dt * 2.6);
-  applyCamSize(camSize);
+    /* Look ahead of the cart so it sits low in frame. On a fixed iso camera the
+       sightline is short and the cart must never be centred. */
+    const lead = 15 + S.v * 0.75;
+    const ahead = v3(T.surfaceAt(Math.min(T.LENGTH, S.s + lead), S.u * 0.5));
+    tgt = pos.clone().lerp(ahead, 0.62);
 
-  /* Shake, applied to the look target rather than the camera alone, so the
-     whole frame translates instead of the view swinging. Scales with the
-     square of speed so it is absent at a crawl and unmistakable at 50. */
-  shakeT += dt * 43;
-  /* A tenth of what it was. At 0.30 the frame never settled. */
-  const amp = opts.shake ? Math.pow(Math.min(1, S.v / 30), 2) * (S.air ? 0.01 : 0.05) : 0;
-  tgt.x += Math.sin(shakeT * 1.7) * amp;
-  tgt.y += Math.cos(shakeT * 2.31) * amp * 0.8;
-  const dir = new THREE.Vector3(
-    Math.cos(CAM_PITCH) * Math.cos(camYaw + Math.PI),
-    Math.sin(CAM_PITCH),
-    Math.cos(CAM_PITCH) * Math.sin(camYaw + Math.PI));
-  camera.position.copy(tgt).addScaledVector(dir, CAM_DIST);
-  camera.lookAt(tgt);
+    /* Widening the road is pointless if the view widens with it. The boost
+       punches IN: a camera that tightens under power sells acceleration. */
+    const punch = (S.input && S.input.boost && S.charge > 0.02) ? -4.0 : 0;
+    camSize += ((46 + S.v * 0.50 + punch) - camSize) * Math.min(1, dt * 2.6);
+    applyCamSize(camSize);
+    const dir = new THREE.Vector3(
+      Math.cos(CAM_PITCH) * Math.cos(camYaw + Math.PI),
+      Math.sin(CAM_PITCH),
+      Math.cos(CAM_PITCH) * Math.sin(camYaw + Math.PI));
+    shakeT += dt * 43;
+    const amp = opts.shake ? Math.pow(Math.min(1, S.v / 30), 2) * (S.air ? 0.01 : 0.05) : 0;
+    tgt.x += Math.sin(shakeT * 1.7) * amp;
+    tgt.y += Math.cos(shakeT * 2.31) * amp * 0.8;
+    camera.position.copy(tgt).addScaledVector(dir, CAM_DIST);
+    camera.lookAt(tgt);
+  } else {
+    active = persp;
+    applyCamSize(camSize);
+    shakeT += dt * 43;
+    const amp = opts.shake ? Math.pow(Math.min(1, S.v / 30), 2) * 0.10 : 0;
+
+    if (view === 'chase') {
+      /* Behind and above, lagging on a spring so the cart leads the camera
+         through a corner instead of the camera leading the cart. */
+      const back = 8.5 + S.v * 0.10, up = 3.4;
+      const want = cart.position.clone()
+        .addScaledVector(ctan, -back).addScaledVector(cnrm, up);
+      /* Snap on the first frame, or the camera flies in from the origin. */
+      if (chasePos.lengthSq() === 0) chasePos.copy(want);
+      else chasePos.lerp(want, Math.min(1, dt * 4.5));
+      persp.position.copy(chasePos);
+      persp.position.y += Math.sin(shakeT * 1.9) * amp;
+      tgt = cart.position.clone().addScaledVector(ctan, 7).addScaledVector(cnrm, 1.1);
+      persp.up.copy(cnrm);
+      persp.lookAt(tgt);
+    } else {
+      /* The rider's eyeline. Sits on the cart so it inherits the body roll,
+         which is most of what makes a cockpit view feel like driving. */
+      const eye = cart.localToWorld(new THREE.Vector3(0, 1.28, -0.05));
+      persp.position.copy(eye);
+      persp.position.y += Math.sin(shakeT * 2.4) * amp * 0.6;
+      tgt = cart.localToWorld(new THREE.Vector3(0, 1.05, 24));
+      persp.up.copy(cnrm);
+      persp.lookAt(tgt);
+      tgt = cart.position;
+    }
+  }
 
   sun.position.copy(tgt).addScaledVector(SUN_DIR, 200);
   sun.target.position.copy(tgt);
@@ -1432,7 +1623,7 @@ export function frame(S, dt) {
     updateDust(S, dt, surf.clone().addScaledVector(tan, -1.1).addScaledVector(nrm, 0.25), right);
   }
 
-  renderer.render(scene, camera);
+  renderer.render(scene, active);
 }
 
 export function cameraYaw() { return camYaw; }
