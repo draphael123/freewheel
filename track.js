@@ -48,6 +48,17 @@ export const COURSES = {
       { name: 'HAIRPIN R',   len: 100, turn:  150, grade: -0.16, w: 8.5, bank: 10 },
       { name: 'THE RUN IN',  len: 140, turn:  -35, grade: -0.13, w: 8.0 },
     ],
+    /* Bales left on the road. u is signed across the road, so a hazard on the
+       inside of a corner is a different problem from one on the outside. */
+    hazards: [
+      { s: 235, u: -2.6 }, { s: 246, u:  1.0 },
+      { s: 372, u:  3.0 },
+      { s: 520, u: -4.2 }, { s: 534, u: -1.4 },
+      { s: 700, u:  2.2 }, { s: 712, u: -0.6 },
+      { s: 880, u:  4.0 },
+      { s: 972, u: -1.8 },
+      { s: 1112, u: 2.8 }, { s: 1124, u: 0.2 },
+    ],
   },
 
   spillway: {
@@ -140,7 +151,7 @@ const ramp = (from, to, a) => (a >= BLEND ? to : from + (to - from) * smoothstep
    Live bindings. Reassigned by load(); importers see the current course.
    -------------------------------------------------------------------------- */
 export let ID, TITLE, BLURB, OWNS, THEME, HALF_W, SLAB;
-export let PTS, LENGTH, NAMES, TOP_Y, BOT_Y;
+export let PTS, LENGTH, NAMES, TOP_Y, BOT_Y, HAZARDS;
 
 export function load(id) {
   const C = COURSES[id] || COURSES[COURSE_IDS[0]];
@@ -149,6 +160,7 @@ export function load(id) {
   SLAB = C.slab;
   HALF_W = Math.max(C.halfW, ...C.segments.map((g) => g.w ?? C.halfW));
   NAMES = C.segments.map((s) => s.name);
+  HAZARDS = (C.hazards || []).map((h) => ({ ...h, hit: false }));
 
   const pts = [];
   let x = 0, z = 0, heading = 0, s = 0, base = 0;
@@ -251,6 +263,15 @@ export const bankAt  = (s) => lerpField(s, 'bank');
    corner into a decision, and it costs one number per segment. HALF_W is kept
    as the course maximum, for anything that needs a fixed envelope. */
 export const halfWAt = (s) => lerpField(s, 'halfW');
+
+/* Hazards within reach of a cart. A linear scan is fine — a course has a dozen
+   of these, and an index would cost more to keep honest than it saves. */
+export const HAZARD_R = 1.9;
+export function hazardsNear(s, span = 4) {
+  const out = [];
+  for (const h of HAZARDS) if (Math.abs(h.s - s) < span) out.push(h);
+  return out;
+}
 export const segAt   = (s) => PTS[Math.round(idxAt(s))].seg;
 
 /* World position of the road surface at distance s, offset u metres to the

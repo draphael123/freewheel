@@ -57,6 +57,19 @@ their line is, so a slow rival is slow for a reason you can watch.
 
 Measured over a full field: **11.4 s spread, 6 lead changes**, everyone finishes.
 
+## The road furniture
+
+Sense of speed comes from **proximity**, and an open hillside has nothing near
+you — which is why 55 mph read as a stroll whatever the number said. Gantries
+pass directly overhead, bunting runs a metre off your shoulder, and hay bales
+sit on the road itself: soft, so a bad line costs you a place rather than the
+run.
+
+The cart rolls out of corners while the rider leans in, squats under power and
+dives under braking, its wheels spin and steer, and the suspension takes a hit
+on landing. Two objects disagreeing is what sells weight — a rigid model does
+not, at any level of detail.
+
 ## The hills
 
 Three venues, and each one **owns a mechanic** rather than a palette. If two
@@ -126,6 +139,13 @@ Physics numbers came out of `FW.sim()`, not out of taste:
   that touched on the grid held each other at zero for the entire race, and the
   field report quietly averaged over the three that got away. Scale contact
   losses by speed, and make the harness name its non-finishers.
+- **The handedness trap bites twice.** `{right, nrm, tan}` has determinant −1,
+  so it is a reflection and `setFromRotationMatrix` returns nonsense. It put the
+  cart broadside across the road the first time and rendered a 15 m gantry banner
+  as a thin vertical strip the second. Build X from `nrm × tan`.
+- **Nearest-neighbour terrain sampling shows.** The road wall is built every
+  metre against a 4.5 m terrain grid, so the two met in a sawtooth that read as
+  broken geometry. Bilinear fixed it in four lines.
 - **A different URL is a different module.** `main.js` imported
   `./track.js?v=4` for cache-busting while `render.js` imported `./track.js`
   plainly, which created two track modules with separate state: switching venue

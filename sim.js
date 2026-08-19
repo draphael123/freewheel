@@ -36,6 +36,8 @@ export const tune = {
                              and every policy died on a climb looking exactly
                              like a course-design problem. */
   brake: 6.0,             // m/s^2 while the drag brake is down
+  baleLoss: 0.24,         // fraction of speed lost hitting a bale
+  baleShove: 2.6,         // m/s of lateral shove away from it
   wallBite: 0.42,         // speed lost per m/s of lateral speed INTO the barrier
   wallScrub: 4.0,         // m/s^2 lost while scraping along it
 
@@ -92,7 +94,7 @@ export function create() {
     N: 1,                   // load in g, for the airborne test and the HUD
     brakeTotal: 0, airTotal: 0, airT: 0, cleanLandings: 0, landQuality: 0,
     vMax: 0, lastLanding: 0, thrustTotal: 0,
-    onWall: false, wallHits: 0, lastWallBite: 0, slip: 0,
+    onWall: false, wallHits: 0, lastWallBite: 0, slip: 0, baleHits: 0, lastBaleS: -99,
     mod: { drag: 1 }, drafting: false, scraping: false,
     input: { tuck: false, steer: 0, brake: false, thrust: false },
   };
@@ -225,6 +227,23 @@ export function step(S, dt) {
      an embankment, on nothing, at no real cost. Hay bales line a closed road,
      so: you cannot leave, and touching costs you. A bite proportional to how
      hard you arrived, then a continuous scrub while you lean on it. */
+  /* Bales. Soft, so they cost you speed and a shove rather than ending the run
+     — the punishment for a bad line should be a place lost, not a restart. */
+  if (!S.air && S.s - S.lastBaleS > 8) {
+    for (const h of T.hazardsNear(S.s, 2.6)) {
+      if (Math.abs(h.u - S.u) < T.HAZARD_R + 0.9) {
+        /* ONE hit per impact. Testing the overlap every frame charged the
+           player once per tick for as long as they were inside the bale —
+           26 to 55 "hits" per run, and a course nobody could finish quickly. */
+        S.v = Math.max(0, S.v * (1 - K.baleLoss));
+        S.u += Math.sign(S.u - h.u || 1) * K.baleShove;
+        S.baleHits++;
+        S.lastBaleS = S.s;
+        break;
+      }
+    }
+  }
+
   const wall = T.halfWAt(S.s);
   const wasOn = S.onWall;
   S.onWall = Math.abs(S.u) > wall;
@@ -313,7 +332,7 @@ export function run(policyName, opts = {}) {
     cleanLandings: S.cleanLandings,
     thrustUsed: +S.thrustTotal.toFixed(2),
     airTime: +S.airTotal.toFixed(2),
-    wallHits: S.wallHits,
+    wallHits: S.wallHits, baleHits: S.baleHits,
   };
 }
 

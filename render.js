@@ -122,8 +122,8 @@ function buildRoad(tr) {
        face grows from 1 m to 14 m states the height directly, in screen space,
        without the player having to infer anything. World-down rather than
        along the road normal, so it reads as an embankment and not a wedge. */
-    const dl = Math.max(D, Math.min(34, l.y - terrainY(tr, l.x, l.z) + 0.6));
-    const dr = Math.max(D, Math.min(34, r.y - terrainY(tr, r.x, r.z) + 0.6));
+    const dl = Math.max(D, Math.min(16, l.y - terrainY(tr, l.x, l.z) + 0.6));
+    const dr = Math.max(D, Math.min(16, r.y - terrainY(tr, r.x, r.z) + 0.6));
     const ld = l.clone().add(new THREE.Vector3(0, -dl, 0));
     const rd = r.clone().add(new THREE.Vector3(0, -dr, 0));
     pos.push(l.x, l.y, l.z, r.x, r.y, r.z, ld.x, ld.y, ld.z, rd.x, rd.y, rd.z);
@@ -360,11 +360,17 @@ function buildTerrain() {
 /* -------------------------------------------------------------------------- */
 /* pylons, posts, trees                                                       */
 /* -------------------------------------------------------------------------- */
+/* Bilinear, not nearest. The road's side wall is built every metre while the
+   terrain grid is 4.5 m, so sampling the nearest cell made the wall meet the
+   ground in a sawtooth that read as broken geometry. */
 function terrainY(tr, x, z) {
-  const fi = (x - tr.minX) / tr.CELL, fj = (z - tr.minZ) / tr.CELL;
-  const i = Math.max(0, Math.min(tr.nx - 1, Math.floor(fi)));
-  const j = Math.max(0, Math.min(tr.nz - 1, Math.floor(fj)));
-  return tr.heights[j * (tr.nx + 1) + i];
+  const fi = Math.max(0, Math.min(tr.nx - 1.001, (x - tr.minX) / tr.CELL));
+  const fj = Math.max(0, Math.min(tr.nz - 1.001, (z - tr.minZ) / tr.CELL));
+  const i = Math.floor(fi), j = Math.floor(fj);
+  const u = fi - i, v = fj - j, W = tr.nx + 1;
+  const h00 = tr.heights[j * W + i],     h10 = tr.heights[j * W + i + 1];
+  const h01 = tr.heights[(j + 1) * W + i], h11 = tr.heights[(j + 1) * W + i + 1];
+  return (h00 * (1 - u) + h10 * u) * (1 - v) + (h01 * (1 - u) + h11 * u) * v;
 }
 
 function buildProps(tr) {
@@ -376,7 +382,10 @@ function buildProps(tr) {
     const c = T.surfaceAt(s, 0);
     const g = terrainY(tr, c.x, c.z);
     const h = c.y - T.SLAB - g;
-    if (h > 1.6) legs.push({ x: c.x, z: c.z, y: g, h, right: basisAt(s).right });
+    /* Legs, not towers. Where the ground falls tens of metres away the road
+       is on an embankment, and drawing a 30 m column every 13 m turned the
+       verge into a picket fence of skyscrapers. */
+    if (h > 1.6 && h < 13) legs.push({ x: c.x, z: c.z, y: g, h, right: basisAt(s).right });
   }
   const pg = new THREE.BoxGeometry(1, 1, 1);
   pylons = new THREE.InstancedMesh(pg,
@@ -490,6 +499,91 @@ function buildProps(tr) {
 
 
 /* -------------------------------------------------------------------------- */
+/* furniture — the things that whip past close to the camera                   */
+/* -------------------------------------------------------------------------- */
+/* Sense of speed comes from PROXIMITY. An open hillside has nothing near you,
+   which is why 55 mph read as a stroll no matter what the number said. Gantries
+   pass directly overhead, bunting runs a metre off your shoulder, and bales sit
+   on the road itself. */
+function buildFurniture(tr) {
+  const q = new THREE.Quaternion(), mtx = new THREE.Matrix4();
+
+  /* ---- bales: the hazards, drawn where the physics says they are ---------- */
+  const baleG = new THREE.CylinderGeometry(T.HAZARD_R * 0.85, T.HAZARD_R * 0.85, 2.2, 10);
+  baleG.rotateZ(Math.PI / 2);
+  const baleM = new THREE.MeshLambertMaterial({ color: 0xd8c48a });
+  const bales = new THREE.InstancedMesh(baleG, baleM, Math.max(1, T.HAZARDS.length));
+  bales.castShadow = bales.receiveShadow = true;
+  T.HAZARDS.forEach((h, i) => {
+    const c = v3(T.surfaceAt(h.s, h.u));
+    const { nrm, tan } = basisAt(h.s);
+    q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      new THREE.Vector3().crossVectors(nrm, tan).normalize(), nrm, tan.clone().normalize()));
+    mtx.compose(c.addScaledVector(nrm, 0.85), q, new THREE.Vector3(1, 1, 1));
+    bales.setMatrixAt(i, mtx);
+  });
+  courseRoot.add(bales);
+
+  /* ---- gantries ---------------------------------------------------------- */
+  const postM = new THREE.MeshLambertMaterial({ color: 0x4a4038 });
+  const bannerM = new THREE.MeshLambertMaterial({
+    color: TH.post.b, side: THREE.DoubleSide,
+  });
+  for (let s0 = 120; s0 < T.LENGTH - 60; s0 += 190) {
+    const w = T.halfWAt(s0) + SHOULDER;
+    const { nrm, right, tan } = basisAt(s0);
+    const c = v3(T.surfaceAt(s0, 0));
+    const H = 6.4;
+    for (const side of [-1, 1]) {
+      const p = new THREE.Mesh(new THREE.BoxGeometry(0.34, H, 0.34), postM);
+      p.position.copy(c).addScaledVector(right, side * w).addScaledVector(nrm, H / 2);
+      p.castShadow = true;
+      courseRoot.add(p);
+    }
+    /* One basis for both, and it must be the RIGHT-HANDED one. setFromUnitVectors
+       pins a single axis and leaves the roll arbitrary, which put the crossbeam
+       at a jaunty angle; {right, nrm, tan} then fixed the angle but has
+       determinant -1, so setFromRotationMatrix returned nonsense and the banner
+       rendered as a thin vertical strip. Same trap as the cart. */
+    const B = new THREE.Matrix4().makeBasis(
+      new THREE.Vector3().crossVectors(nrm, tan).normalize(),
+      nrm, tan.clone().normalize());
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(w * 2 + 0.5, 0.36, 0.42), postM);
+    beam.position.copy(c).addScaledVector(nrm, H);
+    beam.quaternion.setFromRotationMatrix(B);
+    beam.castShadow = true;
+    const banner = new THREE.Mesh(new THREE.PlaneGeometry(w * 1.7, 1.6), bannerM);
+    banner.position.copy(c).addScaledVector(nrm, H - 1.0);
+    banner.quaternion.setFromRotationMatrix(B);
+    courseRoot.add(beam, banner);
+  }
+
+  /* ---- bunting: cheap, dense, and always within a metre of the verge ------ */
+  const flagG = new THREE.PlaneGeometry(0.9, 0.62);
+  const flags = new THREE.InstancedMesh(flagG,
+    new THREE.MeshLambertMaterial({ color: TH.post.a, side: THREE.DoubleSide }), 700);
+  let n = 0;
+  for (let s0 = 20; s0 < T.LENGTH - 20 && n < 700; s0 += 3.2) {
+    const { nrm, right, tan } = basisAt(s0);
+    /* Face ACROSS the road, not along it. Oriented like the banners the flags
+       were edge-on to a camera that sits beside the road, and 700 of them
+       rendered as a faint dotted line. */
+    q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      tan.clone().normalize(), nrm, right));
+    for (const side of [-1, 1]) {
+      if (n >= 700) break;
+      const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER * 0.85)));
+      const sway = 0.25 + 0.25 * Math.sin(s0 * 0.9);
+      mtx.compose(c.addScaledVector(nrm, 2.3 + sway * 0.4), q,
+                  new THREE.Vector3(1, 1, 1));
+      flags.setMatrixAt(n++, mtx);
+    }
+  }
+  flags.count = n;
+  courseRoot.add(flags);
+}
+
+/* -------------------------------------------------------------------------- */
 /* sky                                                                        */
 /* -------------------------------------------------------------------------- */
 /* A vertex-coloured dome rather than a flat clear colour. Two things it buys:
@@ -581,52 +675,98 @@ function updateDust(S, dt, at, right) {
    they stop reading as cars in the race and start reading as scenery. */
 function makeCart(col) {
   const cart = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(1.55, 0.42, 2.9),
-    new THREE.MeshLambertMaterial({ color: col.body }));
-  body.position.y = 0.46; body.castShadow = true;
-  cart.add(body);
+  const G = new THREE.Group();                 // body group: rolls and pitches
+  cart.add(G);
+  cart.userData.body = G;
 
-  const nose = new THREE.Mesh(
-    new THREE.BoxGeometry(1.1, 0.30, 0.9),
-    new THREE.MeshLambertMaterial({ color: col.nose }));
-  nose.position.set(0, 0.42, 1.75); nose.castShadow = true;
-  cart.add(nose);
-
-  const wg = new THREE.CylinderGeometry(0.36, 0.36, 0.26, 10);
-  wg.rotateZ(Math.PI / 2);
-  const wm = new THREE.MeshLambertMaterial({ color: 0x1d1b19 });
-  for (const [x, z] of [[-0.86, 1.05], [0.86, 1.05], [-0.86, -1.05], [0.86, -1.05]]) {
-    const w = new THREE.Mesh(wg, wm);
-    w.position.set(x, 0.36, z); w.castShadow = true;
-    cart.add(w);
+  /* Silhouette first. Three clearly different masses — a long low shell, a
+     rider sat high in it, and small wheels — because equal-sized lumps read as
+     a pile whatever detail you bolt on. The helmet is the brightest thing on
+     the cart on purpose: at this camera distance it is the dot your eye tracks. */
+  const shell = new THREE.BoxGeometry(1.5, 0.46, 3.0);
+  const pos = shell.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    if (z > 0) {                               // taper toward the nose
+      pos.setX(i, pos.getX(i) * 0.62);
+      pos.setY(i, pos.getY(i) * 0.72 - 0.05);
+    }
   }
+  shell.computeVertexNormals();
+  const paint = new THREE.MeshPhongMaterial({
+    color: col.body, shininess: 26, specular: 0x2a2a2a, flatShading: true,
+  });
+  const body = new THREE.Mesh(shell, paint);
+  body.position.y = 0.44; body.castShadow = true;
+  G.add(body);
 
-  /* The rider IS the pump gauge. Whether the mechanic is legible without a
-     HUD comes down entirely to whether this silhouette reads as crouched or
-     standing from a fixed camera 220 m away. */
+  const dark = new THREE.MeshLambertMaterial({ color: 0x191b1e });
+  const pan = new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.16, 2.7), dark);
+  pan.position.y = 0.24; pan.castShadow = true;
+  G.add(pan);
+
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.9, 4), paint);
+  nose.rotation.set(Math.PI / 2, Math.PI / 4, 0);
+  nose.position.set(0, 0.40, 1.85); nose.castShadow = true;
+  G.add(nose);
+
+  /* A tail fin. Pure silhouette — it costs six triangles and it is what tells
+     you which way a cart is pointing when it is forty metres away. */
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.46, 0.62),
+    new THREE.MeshLambertMaterial({ color: col.nose }));
+  fin.position.set(0, 0.80, -1.28); fin.castShadow = true;
+  G.add(fin);
+
+  /* Big at the back, small at the front: a hot-rod stance reads instantly and
+     gives the shape somewhere to sit. */
+  const wheels = [];
+  const tyre = new THREE.MeshLambertMaterial({ color: 0x141416 });
+  const hub = new THREE.MeshLambertMaterial({ color: 0x8d8f93 });
+  for (const [x, z, r, steers] of [[-0.84, 1.12, 0.30, 1], [0.84, 1.12, 0.30, 1],
+                                   [-0.88, -1.12, 0.42, 0], [0.88, -1.12, 0.42, 0]]) {
+    const pivot = new THREE.Group();            // steering
+    pivot.position.set(x, r, z);
+    const spin = new THREE.Group();             // rolling
+    const g = new THREE.CylinderGeometry(r, r, 0.26, 12);
+    g.rotateZ(Math.PI / 2);
+    const w = new THREE.Mesh(g, tyre);
+    w.castShadow = true;
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.30, r * 0.9, r * 0.9), hub);
+    spin.add(w, cap);
+    pivot.add(spin);
+    G.add(pivot);
+    wheels.push({ pivot, spin, r, steers });
+  }
+  cart.userData.wheels = wheels;
+
   const rider = new THREE.Group();
   const torso = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.33, 0.62, 3, 8),
+    new THREE.CapsuleGeometry(0.30, 0.52, 3, 8),
     new THREE.MeshLambertMaterial({ color: col.rider }));
-  torso.name = 'torso'; torso.position.y = 0.52; torso.castShadow = true;
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.25, 10, 8),
-    new THREE.MeshLambertMaterial({ color: col.skin }));
-  head.name = 'head'; head.position.y = 1.12; head.castShadow = true;
-  rider.add(torso, head);
-  rider.position.set(0, 0.55, -0.35);
-  cart.add(rider);
+  torso.name = 'torso'; torso.position.y = 0.46; torso.castShadow = true;
+  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.20, 0.34),
+    new THREE.MeshLambertMaterial({ color: col.rider }));
+  shoulders.position.y = 0.76; shoulders.castShadow = true;
+  const helmet = new THREE.Mesh(
+    new THREE.SphereGeometry(0.26, 12, 10),
+    new THREE.MeshPhongMaterial({ color: col.skin, shininess: 40, specular: 0x333333 }));
+  helmet.name = 'head'; helmet.position.y = 1.06; helmet.castShadow = true;
+  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.11, 0.22),
+    new THREE.MeshLambertMaterial({ color: 0x14181f }));
+  visor.position.set(0, 1.07, 0.20);
+  rider.add(torso, shoulders, helmet, visor);
+  rider.position.set(0, 0.50, -0.30);
+  G.add(rider);
+
   scene.add(cart);
   cart.userData.rider = rider;
+  cart.userData.anim = { roll: 0, pitch: 0, spin: 0, susp: 0, prevV: 0, steer: 0 };
   return cart;
 }
 
-function buildCart() {
-  cart = makeCart(TH ? TH.cart : { body: 0xb8452c, nose: 0x8d3320,
-                                   rider: 0x2f4f6d, skin: 0xe0c9a6 });
-  rider = cart.userData.rider;
-
+/* The height cues. Built once and never rebuilt, unlike the cart, which is
+   recreated whenever the theme changes. */
+function buildCues() {
   /* Contact shadow. The single most important object in this file: it is the
      only thing that says how far above the road the cart is, and the only
      thing that says where it is going to land. */
@@ -702,7 +842,7 @@ export function init(canvas) {
   hemi = new THREE.HemisphereLight(0x9dc0e2, 0x5c5240, 1.15);
   scene.add(hemi);
 
-  buildCart();
+  buildCues();
   buildDust();
   build();
   resize();
@@ -746,14 +886,15 @@ export function build() {
   buildRoad(tr);
   buildCentreLine();
   buildProps(tr);
+  buildFurniture(tr);
 
-  cart.children[0].material.color.set(TH.cart.body);
-  cart.children[1].material.color.set(TH.cart.nose);
-  rider.getObjectByName('torso').material.color.set(TH.cart.rider);
-  rider.getObjectByName('head').material.color.set(TH.cart.skin);
+  /* Rebuild the cart rather than reaching into it to repaint. The old code
+     poked cart.children[0].material, which stopped being a Mesh the moment the
+     body gained a group to roll and pitch inside. */
+  if (cart) dispose(cart);
+  cart = makeCart(TH.cart);
+  rider = cart.userData.rider;
   dust.material.color.set(TH.dust);
-  for (const m of rivalCarts) m.userData.rider.getObjectByName('head')
-    .material.color.set(TH.cart.skin);
 
   camSize = 54;
   camYaw = camYawTarget = T.headAt(0);
@@ -773,10 +914,20 @@ function applyCamSize(size) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* GPU buffers are not garbage collected with the scene graph. */
+function dispose(root) {
+  root.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    if (o.material) (Array.isArray(o.material) ? o.material : [o.material])
+      .forEach((m) => m.dispose());
+  });
+  scene.remove(root);
+}
+
 /* Rivals get their own meshes on demand, keyed to the field. Called whenever a
    race starts; safe to call repeatedly. */
 export function setField(carts) {
-  for (const m of rivalCarts) scene.remove(m);
+  for (const m of rivalCarts) dispose(m);
   rivalCarts = [];
   for (const c of carts) {
     if (c.isPlayer) continue;
@@ -789,7 +940,7 @@ export function setField(carts) {
 
 /* Sit one cart on the road. Shared by you and by every rival, so a rival can
    never be placed by different rules than you are. */
-function placeCart(group, St) {
+function placeCart(group, St, dt) {
   const { tan, right, nrm } = basisAt(St.s);
   const surf = v3(T.surfaceAt(St.s, St.u));
   const y = St.air ? St.yAir : surf.y;
@@ -804,22 +955,54 @@ function placeCart(group, St) {
   group.quaternion.setFromRotationMatrix(
     new THREE.Matrix4().makeBasis(bx, nrm, tan.clone().normalize()));
 
+  /* ---- the part that actually makes it look like a car ------------------- */
+  const A = group.userData.anim, G = group.userData.body;
+  const k = Math.min(1, dt * 8);
+
+  /* Body rolls OUT of the corner, rider leans IN. Two objects disagreeing is
+     what sells weight; a rigid model at any level of detail does not. */
+  const latG = (St.v * St.v * T.khAt(St.s)) / 9.81;
+  const wantRoll = Math.max(-0.30, Math.min(0.30, latG * 0.055));
+  A.roll += (wantRoll - A.roll) * k;
+
+  /* Squat under power, dive under braking. Read from the speed the physics
+     actually produced rather than from the inputs, so it never lies. */
+  const accel = dt > 0 ? (St.v - A.prevV) / dt : 0;
+  A.prevV = St.v;
+  const wantPitch = Math.max(-0.14, Math.min(0.14, -accel * 0.012));
+  A.pitch += (wantPitch - A.pitch) * Math.min(1, dt * 6);
+
+  if (A.wasAir && !St.air) A.susp = Math.min(0.34, (St.lastLanding || 0) * 0.035);
+  A.wasAir = St.air;
+  A.susp *= Math.max(0, 1 - dt * 6);
+
+  G.rotation.z = A.roll;
+  G.rotation.x = A.pitch + (St.air ? -0.06 : 0);
+  G.position.y = -A.susp;
+  group.userData.rider.rotation.z = -A.roll * 0.75;
+
+  A.spin += St.v * dt;
+  A.steer += (((St.input && St.input.steer) || 0) * 0.42 - A.steer) * Math.min(1, dt * 10);
+  for (const w of group.userData.wheels) {
+    w.spin.rotation.x = -A.spin / w.r;
+    if (w.steers) w.pivot.rotation.y = -A.steer;
+  }
+
   const r = group.userData.rider, c = St.c;
-  r.position.y = 0.30 + c * 0.45;
-  r.getObjectByName('torso').scale.set(1 + (1 - c) * 0.30, 0.62 + c * 0.38, 1 + (1 - c) * 0.30);
-  r.getObjectByName('head').position.y = 0.80 + c * 0.36;
-  r.rotation.x = (1 - c) * 0.55;
+  r.position.y = 0.30 + c * 0.42;
+  r.getObjectByName('torso').scale.set(1 + (1 - c) * 0.22, 0.66 + c * 0.34, 1 + (1 - c) * 0.22);
+  r.rotation.x = (1 - c) * 0.62;
   return { tan, right, nrm, surf, pos };
 }
 
 export function frame(S, dt) {
-  const { tan, right, nrm, surf, pos } = placeCart(cart, S);
+  const { tan, right, nrm, surf, pos } = placeCart(cart, S, dt);
   const y = S.air ? S.yAir : surf.y;
 
   for (const m of rivalCarts) {
     const c = m.userData.cart;
     m.visible = !c.done;
-    if (m.visible) placeCart(m, c);
+    if (m.visible) placeCart(m, c, dt);
   }
 
   /* ---- the contact shadow ---------------------------------------------- */
@@ -889,8 +1072,11 @@ export function frame(S, dt) {
   const tgt = pos.clone().lerp(ahead, 0.62);
 
   /* Widening the road is pointless if the view widens with it — the road has
-     to occupy MORE of the frame, not the same fraction of a bigger one. */
-  camSize += ((54 + S.v * 0.55) - camSize) * Math.min(1, dt * 1.8);
+     to occupy MORE of the frame, not the same fraction of a bigger one. The
+     boost punches IN rather than out: a camera that tightens under power is
+     the oldest trick for selling acceleration and it still works. */
+  const punch = (S.input && S.input.thrust && S.charge > 0.02) ? -5.0 : 0;
+  camSize += ((46 + S.v * 0.50 + punch) - camSize) * Math.min(1, dt * 2.6);
   applyCamSize(camSize);
 
   /* Shake, applied to the look target rather than the camera alone, so the
