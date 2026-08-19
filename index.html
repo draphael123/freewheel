@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>FREEWHEEL</title>
+<meta name="description" content="No engine. Height is your fuel. A gravity racer down a mountain that is also a town.">
+<style>
+  :root{
+    --ink:#f2ebde;
+    --dim:#a9aeb2;
+    --faint:#767b80;
+    --warm:#e8a24a;
+    --cold:#6fa8d8;
+    --red:#c2452e;
+    --panel:rgba(10,13,17,.90);
+    --edge:rgba(242,235,222,.16);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;background:#0b0f14;overflow:hidden}
+  body{
+    font-family:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif;
+    color:var(--ink);-webkit-font-smoothing:antialiased;
+  }
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+
+  /* A vignette costs one element and does more for the image than any post
+     chain — and it avoids rendering to a target, where three.js would skip
+     tone mapping and quietly wash the whole scene out. */
+  #vig{position:fixed;inset:0;pointer-events:none;z-index:2;
+       background:radial-gradient(ellipse 78% 72% at 50% 46%,
+                  rgba(0,0,0,0) 42%, rgba(6,8,11,.30) 76%, rgba(6,8,11,.62) 100%)}
+
+  .hud{position:fixed;pointer-events:none;user-select:none;z-index:5;
+       text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 20px rgba(0,0,0,.7);line-height:1.35}
+  .lbl{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+  .num{font-variant-numeric:tabular-nums}
+  #hudWrap{opacity:0;transition:opacity .45s}
+  #hudWrap.on{opacity:1}
+
+  #speed{left:26px;bottom:24px}
+  #speed .v{font-size:56px;line-height:.9;letter-spacing:-.02em}
+  #speed .u{font-size:12px;letter-spacing:.22em;color:var(--dim);margin-left:4px}
+  #speed .seg{margin-top:8px;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--warm)}
+
+  #load{left:26px;bottom:132px;width:210px}
+  #load .bar{position:relative;height:9px;margin-top:5px;
+             background:rgba(242,235,222,.10);border:1px solid var(--edge)}
+  #load .fill{position:absolute;inset:0 auto 0 0;background:var(--cold)}
+  #load .one{position:absolute;top:-3px;bottom:-3px;left:33.3%;width:1px;background:var(--ink);opacity:.55}
+  #load .cue{margin-top:6px;font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint)}
+  #load .cue.on{color:var(--warm)}
+
+  #prof{right:26px;top:50%;transform:translateY(-50%);width:112px;height:340px}
+  #prof svg{width:100%;height:100%;overflow:visible}
+  #prof .cap{position:absolute;right:0;font-size:10px;letter-spacing:.18em;
+             text-transform:uppercase;color:var(--faint)}
+  #prof .cap.t{top:-16px}
+  #prof .cap.b{bottom:-16px}
+
+  #flash{left:50%;top:34%;transform:translateX(-50%);text-align:center;opacity:0}
+  #flash .n{font-size:38px;color:var(--warm)}
+  #flash .t{font-size:10px;letter-spacing:.3em;text-transform:uppercase;color:var(--dim)}
+
+  #tip{left:50%;bottom:34px;transform:translateX(-50%);text-align:center;
+       font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--faint)}
+
+  /* ---------------------------- overlays --------------------------------- */
+  .screen{position:fixed;inset:0;z-index:10;display:none;
+          background:radial-gradient(ellipse 90% 80% at 50% 40%,rgba(14,18,24,.86),rgba(6,8,11,.96));
+          backdrop-filter:blur(4px);overflow:auto}
+  .screen.on{display:grid;place-items:center}
+  .sheet{width:min(660px,90vw);padding:44px 52px}
+
+  .title{font-size:46px;letter-spacing:.36em;text-indent:.36em;font-weight:400;line-height:1}
+  .rule{height:1px;background:var(--edge);margin:20px 0}
+  .kicker{font-size:11px;letter-spacing:.32em;text-transform:uppercase;color:var(--warm);margin-top:14px}
+  .body{font-size:14.5px;line-height:1.72;color:var(--dim);margin-top:20px}
+  .body b{color:var(--ink);font-weight:400}
+  .body .key{display:inline-block;padding:1px 7px;border:1px solid var(--edge);
+             border-radius:2px;font-size:12px;letter-spacing:.1em;color:var(--ink)}
+
+  .actions{display:flex;gap:12px;margin-top:32px;flex-wrap:wrap}
+  .btn{padding:13px 26px;border:1px solid var(--edge);font-size:11.5px;
+       letter-spacing:.26em;text-transform:uppercase;transition:.16s;color:var(--dim)}
+  .btn:hover{border-color:var(--warm);color:var(--ink);background:rgba(232,162,74,.08)}
+  .btn.pri{border-color:var(--warm);color:var(--ink)}
+  .btn.pri:hover{background:rgba(232,162,74,.16)}
+
+  /* settings */
+  .grp{margin-top:26px}
+  .grp h3{font-size:10px;letter-spacing:.28em;text-transform:uppercase;
+          color:var(--faint);font-weight:400;margin-bottom:10px}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:16px;
+       padding:9px 0;border-bottom:1px solid rgba(242,235,222,.07);cursor:pointer}
+  .row:hover .rn{color:var(--ink)}
+  .rn{font-size:13.5px;color:var(--dim);transition:.15s}
+  .rd{font-size:11px;color:var(--faint);margin-top:2px;letter-spacing:.02em}
+  .sw{flex:0 0 auto;width:40px;height:20px;border:1px solid var(--edge);
+      border-radius:11px;position:relative;transition:.16s}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;
+             border-radius:50%;background:var(--faint);transition:.16s}
+  .row.on .sw{border-color:var(--warm);background:rgba(232,162,74,.16)}
+  .row.on .sw::after{left:22px;background:var(--warm)}
+  .seg3{display:flex;gap:6px}
+  .seg3 button{padding:5px 12px;border:1px solid var(--edge);font-size:10.5px;
+               letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+  .seg3 button.on{border-color:var(--warm);color:var(--ink)}
+
+  /* finish */
+  #done .sheet{text-align:center}
+  #done .t{font-size:74px;margin:6px 0 2px;font-variant-numeric:tabular-nums;line-height:1}
+  #done .r{font-size:12.5px;letter-spacing:.1em;color:var(--faint);margin-top:18px}
+  #done .r b{color:var(--ink);font-weight:400}
+  #done .best{font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--warm);margin-top:10px}
+
+  #boot{position:fixed;inset:0;display:grid;place-items:center;z-index:20;background:#0b0f14}
+  #boot .m{font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--faint)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="vig"></div>
+
+<div id="boot"><div class="m">cutting the road…</div></div>
+
+<!-- ------------------------------- intro ------------------------------- -->
+<div class="screen" id="intro"><div class="sheet">
+  <div class="title">FREEWHEEL</div>
+  <div class="kicker">no engine · height is your fuel</div>
+  <div class="rule"></div>
+  <div class="body">
+    Once a year the mountain closes and the whole town becomes the track. No
+    motors — only what gravity lends you, and only until you spend it.
+    <br><br>
+    Hold <span class="key">SPACE</span> to tuck: low, fast, cheap.
+    <b>Let go as the road compresses under you</b> — when the load meter passes
+    1&nbsp;g — and you pump speed out of the hill itself. Stand up anywhere else
+    and you are just a sail.
+  </div>
+  <div class="actions">
+    <button class="btn pri" id="go">run the hill</button>
+    <button class="btn" id="openSet">settings</button>
+  </div>
+</div></div>
+
+<!-- ------------------------------ settings ----------------------------- -->
+<div class="screen" id="settings"><div class="sheet">
+  <div class="title" style="font-size:22px">SETTINGS</div>
+  <div class="rule"></div>
+
+  <div class="grp"><h3>readability cues</h3>
+    <div class="row" data-opt="shadow"><div><div class="rn">Contact shadow &amp; landing ring</div>
+      <div class="rd">Where you are, and where you will come down</div></div><div class="sw"></div></div>
+    <div class="row" data-opt="tether"><div><div class="rn">Height tether</div>
+      <div class="rd">Dashed line from cart to ground while airborne</div></div><div class="sw"></div></div>
+    <div class="row" data-opt="slabs"><div><div class="rn">Pylons</div>
+      <div class="rd">Legs under the road; their length is its height</div></div><div class="sw"></div></div>
+    <div class="row" data-opt="posts"><div><div class="rn">Marker posts</div>
+      <div class="rd">Roadside rhythm — most of how you read speed</div></div><div class="sw"></div></div>
+    <div class="row" data-opt="slopeTint"><div><div class="rn">Slope tint</div>
+      <div class="rd">Warm where the road falls, cool where it climbs</div></div><div class="sw"></div></div>
+  </div>
+
+  <div class="grp"><h3>atmosphere</h3>
+    <div class="row" data-opt="haze"><div><div class="rn">Altitude haze</div>
+      <div class="rd">Distance fog down the mountain</div></div><div class="sw"></div></div>
+    <div class="row" data-opt="sun"><div><div class="rn">Raking sun</div>
+      <div class="rd">Low key light and its long cast shadows</div></div><div class="sw"></div></div>
+    <div class="row" data-opt="shake"><div><div class="rn">Camera shake</div>
+      <div class="rd">Grows with speed</div></div><div class="sw"></div></div>
+    <div class="row" data-opt="dust"><div><div class="rn">Wheel dust</div>
+      <div class="rd">Grit off the rear wheels</div></div><div class="sw"></div></div>
+  </div>
+
+  <div class="grp"><h3>display</h3>
+    <div class="row" style="cursor:default"><div><div class="rn">Resolution</div>
+      <div class="rd">Drop this first if the frame rate suffers</div></div>
+      <div class="seg3" id="resSeg">
+        <button data-res="0.65">low</button>
+        <button data-res="1">native</button>
+        <button data-res="2">crisp</button>
+      </div></div>
+    <div class="row" data-opt="shadowMap"><div><div class="rn">Cast shadows</div>
+      <div class="rd">The most expensive thing on screen</div></div><div class="sw"></div></div>
+  </div>
+
+  <div class="actions">
+    <button class="btn pri" id="closeSet">back</button>
+    <button class="btn" id="toIntro">title screen</button>
+  </div>
+</div></div>
+
+<!-- ------------------------------- finish ------------------------------ -->
+<div class="screen" id="done"><div class="sheet">
+  <div class="lbl">down</div>
+  <div class="t num" id="dtime">0.00</div>
+  <div class="lbl">seconds</div>
+  <div class="best" id="dbest"></div>
+  <div class="r">top speed <b id="dtop">0</b> mph &middot; pumped <b id="dpump">0</b> mph &middot; airborne <b id="dair">0</b>s</div>
+  <div class="actions" style="justify-content:center">
+    <button class="btn pri" id="again">run it again</button>
+    <button class="btn" id="doneSet">settings</button>
+  </div>
+</div></div>
+
+<!-- -------------------------------- hud -------------------------------- -->
+<div id="hudWrap">
+  <div class="hud" id="speed">
+    <div><span class="v num" id="mph">0</span><span class="u">MPH</span></div>
+    <div class="seg" id="seg">THE GATE</div>
+  </div>
+
+  <div class="hud" id="load">
+    <div class="lbl">load</div>
+    <div class="bar"><div class="fill" id="loadfill"></div><div class="one"></div></div>
+    <div class="cue" id="cue">tuck</div>
+  </div>
+
+  <div class="hud" id="prof">
+    <div class="cap t">summit</div>
+    <svg viewBox="0 0 112 340" preserveAspectRatio="none">
+      <polyline id="profline" fill="none" stroke="rgba(242,235,222,.28)" stroke-width="1.5"/>
+      <polyline id="profdone" fill="none" stroke="#e8a24a" stroke-width="2"/>
+      <circle id="profdot" r="4" fill="#f2ebde"/>
+    </svg>
+    <div class="cap b">the sea</div>
+  </div>
+
+  <div class="hud" id="flash"><div class="n" id="flashn">+0.0</div><div class="t">pump</div></div>
+  <div class="hud" id="tip">esc — settings &middot; r — restart</div>
+</div>
+
+<script>window.__V = '2';</script>
+<script type="module" src="./main.js?v=2"></script>
+</body>
+</html>
