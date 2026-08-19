@@ -106,13 +106,14 @@ function buildRoad(tr) {
      plane — so they stood in mid-air off the edge of the world. A shoulder
      gives them somewhere real to stand, and the painted edge lines below are
      what actually tell the player where the road ends. */
-  const W = T.HALF_W + SHOULDER, D = T.SLAB;
+  const D = T.SLAB;
 
   rings.forEach((s) => {
     const c = v3(T.surfaceAt(s, 0));
     const { right, nrm } = basisAt(s);
     const grade = Math.sin(T.pitchAt(s));
 
+    const W = T.halfWAt(s) + SHOULDER;          // the road pinches; so does the slab
     const l = c.clone().addScaledVector(right, -W);
     const r = c.clone().addScaledVector(right, W);
     /* The side walls run DOWN TO THE GROUND, not a fixed slab thickness. This
@@ -181,7 +182,7 @@ function buildRoad(tr) {
    over crests without any UV stretching. */
 function buildCentreLine() {
   stripe(4.5, 4.0, 0.42, [0], 1.0);                    // centre dashes
-  stripe(6.0, 0.0, 0.26, [-T.HALF_W, T.HALF_W], 0.62); // solid edge lines
+  stripe(6.0, 0.0, 0.26, 'edges', 0.62);               // solid edge lines
 }
 
 /* One ribbon builder for both. Loose quads rather than a texture so the paint
@@ -191,7 +192,11 @@ function stripe(DASH, GAP, W, offsets, dim) {
   const pos = [], idx = [];
   let n = 0;
   for (let s0 = 4; s0 < T.LENGTH - DASH; s0 += DASH + GAP) {
-   for (const off of offsets) {
+   /* Edge lines track the pinch, so the painted line is always where the road
+      actually ends rather than where it ends on average. */
+   const list = offsets === 'edges'
+     ? [-T.halfWAt(s0), T.halfWAt(s0)] : offsets;
+   for (const off of list) {
     const a = [];
     for (const s of [s0, s0 + DASH]) {
       const c = v3(T.surfaceAt(s, off));
@@ -402,7 +407,7 @@ function buildProps(tr) {
   for (let s = 10; s < T.LENGTH - 10; s += 22, k++) {
     const { right, nrm } = basisAt(s);
     for (const side of [-1, 1]) {
-      const c = v3(T.surfaceAt(s, side * (T.HALF_W + SHOULDER * 0.5)));
+      const c = v3(T.surfaceAt(s, side * (T.halfWAt(s) + SHOULDER * 0.5)));
       const p = new THREE.Mesh(bg, k % 2 ? mA : mB);
       p.position.copy(c).addScaledVector(nrm, 1.0);
       p.castShadow = true;

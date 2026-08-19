@@ -31,23 +31,22 @@ const smoothstep = (a, b, x) => {
 export const COURSES = {
   vale: {
     title: 'THE VALE',
-    blurb: 'Sweepers and hairpins. Carry speed through the long corners and pick your line.',
+    blurb: 'A real road. Pinches, a chicane and two hairpins — lift out of the tuck or you will run wide.',
     owns: 'line choice',
     theme: 'alpine',
-    halfW: 8.5, slab: 1.4, grip: 1.0,
+    halfW: 8.0, slab: 1.4, grip: 1.0,
     segments: [
-      { name: 'THE GATE',    len:  70, turn:    0, grade: -0.10 },
-      { name: 'STEEP DROP',  len: 130, turn:  -25, grade: -0.34 },
-      { name: 'THE DIP',     len: 100, turn:   40, grade: -0.14, dip: 10.0 },
-      { name: 'FIRST STEP',  len: 110, turn:    0, grade: -0.16, step: 11.0 },
-      { name: 'HAIRPIN L',   len: 130, turn: -155, grade: -0.20, bank: 8 },
-      { name: 'LONG SWEEP',  len: 240, turn:   70, grade: -0.17, bank: 6, rollers: 4, rollAmp: 3.4 },
-      { name: 'THE CHUTE',   len: 120, turn:  -35, grade: -0.40 },
-      { name: 'THE CLIMB',   len:  90, turn:   20, grade: +0.09 },
-      { name: 'HAIRPIN R',   len: 130, turn:  165, grade: -0.18, bank: 8 },
-      { name: 'THE STEP',    len: 150, turn:  -30, grade: -0.14, step: 16.0 },
-      { name: 'THE STAIRS',  len: 170, turn:   35, grade: -0.20, stairs: 4, stairH: 5.0 },
-      { name: 'THE RUNOUT',  len: 180, turn:  -40, grade: -0.06 },
+      { name: 'THE GATE',    len:  60, turn:    0, grade: -0.12, w: 8.0 },
+      { name: 'FIRST DROP',  len: 100, turn:  -30, grade: -0.32, w: 7.5 },
+      { name: 'THE NARROWS', len:  90, turn:   45, grade: -0.16, w: 5.2 },
+      { name: 'THE LEAP',    len: 110, turn:    0, grade: -0.14, w: 7.5, step: 9.0 },
+      { name: 'HAIRPIN L',   len: 100, turn: -160, grade: -0.18, w: 8.5, bank: 10 },
+      { name: 'THE ESSES',   len: 150, turn:   10, grade: -0.20, w: 6.4, esses: 3, essAmp: 26 },
+      { name: 'THE SWEEP',   len: 170, turn:   85, grade: -0.19, w: 9.0, bank: 12 },
+      { name: 'THE PINCH',   len:  70, turn:  -20, grade: -0.10, w: 4.6 },
+      { name: 'THE STAIRS',  len: 120, turn:   25, grade: -0.22, w: 7.5, stairs: 3, stairH: 4.5 },
+      { name: 'HAIRPIN R',   len: 100, turn:  150, grade: -0.16, w: 8.5, bank: 10 },
+      { name: 'THE RUN IN',  len: 140, turn:  -35, grade: -0.13, w: 8.0 },
     ],
   },
 
@@ -147,17 +146,27 @@ export function load(id) {
   const C = COURSES[id] || COURSES[COURSE_IDS[0]];
   ID = COURSES[id] ? id : COURSE_IDS[0];
   TITLE = C.title; BLURB = C.blurb; OWNS = C.owns; THEME = C.theme;
-  HALF_W = C.halfW; SLAB = C.slab;
+  SLAB = C.slab;
+  HALF_W = Math.max(C.halfW, ...C.segments.map((g) => g.w ?? C.halfW));
   NAMES = C.segments.map((s) => s.name);
 
   const pts = [];
   let x = 0, z = 0, heading = 0, s = 0, base = 0;
-  let prevGrade = 0, prevGrip = C.grip, prevBank = 0;
+  /* Esses snake the HEADING rather than the position, windowed so both the
+     offset and its rate vanish at the segment ends — an un-windowed sine leaves
+     a curvature step at the join, which the cart feels as a kerb it cannot
+     see. */
+  const essAt = (seg, a) => (!seg.esses ? 0
+    : (seg.essAmp * Math.PI / 180)
+      * Math.sin(2 * Math.PI * seg.esses * a)
+      * 0.5 * (1 - Math.cos(2 * Math.PI * a)));
+  let prevGrade = 0, prevGrip = C.grip, prevBank = 0, prevW = C.halfW;
 
   C.segments.forEach((seg, si) => {
     const turnPerM = (seg.turn * Math.PI / 180) / seg.len;
     const grip = seg.grip ?? C.grip;
     const bank = (seg.bank ?? 0) * Math.PI / 180;
+    const w = seg.w ?? C.halfW;
     const n = Math.round(seg.len / STEP);
     for (let i = 0; i < n; i++) {
       const a = i / n;
@@ -165,19 +174,21 @@ export function load(id) {
         x, y: base + extraY(seg, a), z, s, seg: si,
         grip: ramp(prevGrip, grip, a),
         bankMag: ramp(prevBank, bank, a),
+        halfW: ramp(prevW, w, a),
       });
+      const hd = heading + essAt(seg, a);
       heading += turnPerM * STEP;
       base += ramp(prevGrade, seg.grade, a) * STEP;
-      x += Math.cos(heading) * STEP;
-      z += Math.sin(heading) * STEP;
+      x += Math.cos(hd) * STEP;
+      z += Math.sin(hd) * STEP;
       s += STEP;
     }
     base += extraY(seg, 1);                    // carry any net drop forward
-    prevGrade = seg.grade; prevGrip = grip; prevBank = bank;
+    prevGrade = seg.grade; prevGrip = grip; prevBank = bank; prevW = w;
   });
   pts.push({
     x, y: base, z, s, seg: C.segments.length - 1,
-    grip: prevGrip, bankMag: prevBank,
+    grip: prevGrip, bankMag: prevBank, halfW: prevW,
   });
 
   /* Frames. Pitch is signed: negative descends. Vertical curvature is the rate
@@ -236,6 +247,10 @@ export const kvAt    = (s) => lerpField(s, 'kv');
 export const khAt    = (s) => lerpField(s, 'kh');
 export const gripAt  = (s) => lerpField(s, 'grip');
 export const bankAt  = (s) => lerpField(s, 'bank');
+/* Road half-width VARIES along a course. A pinch is the cheapest way to turn a
+   corner into a decision, and it costs one number per segment. HALF_W is kept
+   as the course maximum, for anything that needs a fixed envelope. */
+export const halfWAt = (s) => lerpField(s, 'halfW');
 export const segAt   = (s) => PTS[Math.round(idxAt(s))].seg;
 
 /* World position of the road surface at distance s, offset u metres to the

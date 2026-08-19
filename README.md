@@ -11,15 +11,12 @@ snowline to the sea.
 
 ## The mechanic
 
-Hold **SPACE** to tuck: low drag, cheap, and the correct default.
+Hold **SPACE** to **tuck**. Tucked you are fast and you can barely steer — so
+tuck the straights and **lift for the corners**. The grip meter tells you when:
+past the mark you are going wide whatever you press.
 
-**Let go as the road compresses under you** — when the load meter passes 1 g —
-and you pump speed out of the hill itself, exactly the way a skater pumps a
-bowl. Crouch again over the crest. Stand up anywhere else and you are a sail.
-
-Every good pump also winds the **flywheel**. Hold **W** to spend it — on climbs
-and flats, where gravity gives you nothing. A badly timed pump unwinds it just as
-fast, so the throttle is real but its fuel is still the hill.
+The **flywheel** winds off the wheels, off the brakes, off a clean landing, and
+fastest of all in someone's slipstream. Hold **W** to spend it.
 
 | | |
 |---|---|
@@ -29,6 +26,18 @@ fast, so the throttle is real but its fuel is still the hill.
 | `S` | drag brake |
 | `R` | restart |
 | `ESC` | settings |
+
+### The pump was cut
+
+The original hook was pumping the terrain for speed, the way a skater pumps a
+bowl. It was measured working and it was still removed, because it failed two
+playtests in a row — first as boring, then as simply not understood. Road
+curvature is an order of magnitude gentler than a skate bowl, so it only ever
+paid at an 18x fudge factor. A mechanic needing that much propping up that
+still cannot be read is not a hook.
+
+What replaced it is a trade you get in one corner, on the same key, with the
+same animation.
 
 ## The race
 
@@ -104,6 +113,14 @@ Physics numbers came out of `FW.sim()`, not out of taste:
   half of a cycle let a rider who simply mashed the key farm charge off the good
   halves while the bad halves cost speed but no charge — measured, mashing beat
   playing properly.
+- **Corners were 40x too weak to matter.** A hairpin at 55 mph pushed the cart
+  0.13 m/s wide against 5.4 m/s of steering authority, so the road may as well
+  have been straight and the tuck trade could never bite. One constant.
+- **A behavioural skill model produced no pace at all.** Measured solo on empty
+  road, AI skill 0.60 lapped in 66.60 s and skill 0.99 in 66.50 s — a tenth of a
+  second across the whole range, because lift and brake thresholds only bite in
+  a narrow band of medium corners. Every apparent pace difference in a race was
+  traffic luck. Rivals now carry an explicit drag handicap as well.
 - **A flat penalty can hold a car at a standstill.** Grinding alongside cost a
   fixed 3.2 m/s², which exactly cancelled gravity on a shallow grade — two carts
   that touched on the grid held each other at zero for the entire race, and the

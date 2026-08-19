@@ -179,11 +179,14 @@ function updateHUD(dt) {
   el('mph').textContent = Math.round(S.v * 2.2369);
   el('seg').textContent = T.NAMES[T.segAt(S.s)];
 
-  /* Load is what the pump is paid in, so show it plainly: past 1 g the road is
-     pushing back, and standing up converts that push into speed. */
-  const load = S.air ? 0 : S.N;
-  el('loadfill').style.width = Math.min(100, load * 33.3) + '%';
-  el('loadfill').style.background = load > 1.25 ? 'var(--warm)' : 'var(--cold)';
+  /* Slip: how much of the corner your steering can still answer. Past 1 you go
+     wide no matter what you press, and the only cure is to come out of the
+     tuck. This replaced a load meter that measured a mechanic that no longer
+     exists. */
+  const slip = S.air ? 0 : S.slip;
+  el('loadfill').style.width = Math.min(100, slip * 62) + '%';
+  el('loadfill').style.background = slip > 1 ? 'var(--red)'
+    : slip > 0.72 ? 'var(--warm)' : 'var(--cold)';
   /* Flywheel. Shown in seconds because that is what you spend. */
   const ch = S.charge / SIM.tune.chargeMax;
   el('chgfill').style.width = (ch * 100) + '%';
@@ -191,9 +194,11 @@ function updateHUD(dt) {
   el('chg').classList.toggle('spent', S.input.thrust && S.charge > 0);
   el('chg').classList.toggle('ready', S.charge > 0.25);
 
-  const want = S.air ? 'airborne' : (load > 1.25 ? 'stand up' : 'tuck');
+  const want = S.air ? 'airborne'
+    : slip > 1 ? 'lift — you are going wide'
+    : slip > 0.72 ? 'lift for the corner' : 'tuck';
   el('cue').textContent = want;
-  el('cue').classList.toggle('on', want === 'stand up');
+  el('cue').classList.toggle('on', slip > 0.72);
 
   /* Standings. The single most important number on screen now — it is the
      reason any of the rest of it matters. */
@@ -212,10 +217,10 @@ function updateHUD(dt) {
   el('profdot').setAttribute('cx', PROF[i][0]);
   el('profdot').setAttribute('cy', PROF[i][1]);
 
-  if (S.pumpTotal - lastPumpShown > 0.18) {
-    el('flashn').textContent = '+' + ((S.pumpTotal - lastPumpShown) * 2.2369).toFixed(1);
-    lastPumpShown = S.pumpTotal;
-    flashT = 0.55;
+  if (S.cleanLandings > lastPumpShown) {
+    lastPumpShown = S.cleanLandings;
+    el('flashn').textContent = 'CLEAN';
+    flashT = 0.6;
   }
   if (flashT > 0) {
     flashT -= dt;
@@ -232,7 +237,7 @@ function finish() {
   el('dgrid').textContent = `from ${ORD[S.grid] || S.grid} on the grid`;
   el('dtime').textContent = S.t.toFixed(2);
   el('dtop').textContent = Math.round(S.vMax * 2.2369);
-  el('dpump').textContent = (S.pumpTotal * 2.2369).toFixed(1);
+  el('dpump').textContent = S.cleanLandings;
   el('dair').textContent = S.airTotal.toFixed(1);
   el('dthrust').textContent = (S.thrustTotal * 2.2369).toFixed(1);
   el('dcourse').textContent = T.TITLE;

@@ -18,7 +18,10 @@ import * as SIM from './sim.js';
 const LEN = 3.4, WID = 2.0;
 
 export const tune = {
-  gridGap: 4.2,           // metres between grid slots
+  gridGap: 8.0,           /* metres between grid slots. At 4.2 the field started
+                             on top of itself and never untangled: 40% of the
+                             first hairpin was spent grinding, and every car
+                             finished within 0.14 s of the others. */
   gridStagger: 3.0,       // lateral offset, alternating
 
   draftMin: 2.5,          // start of the tow
@@ -29,18 +32,29 @@ export const tune = {
 
   bumpTransfer: 0.34,     // speed the rear car loses in a rear-end
   bumpGive: 0.14,         // ...and the fraction the front car gains
-  scrapeLoss: 3.2,        // m/s^2 while grinding alongside someone
+  scrapeLoss: 2.2,        // m/s^2 while grinding alongside someone
 };
 
 /* The field. Skill is not a speed multiplier — it drives how well each rival
    times the pump, how late they brake, and how tidy their line is, so a slow
    rival is slow for a reason you can watch. */
+/* The field.
+
+   `skill` shapes BEHAVIOUR — line, lift point, braking point — and `pace` is a
+   flat drag handicap. Behaviour alone was tried first, and it is worth writing
+   down why it failed: measured on empty road, skill 0.60 lapped in 66.60 s and
+   skill 0.99 in 66.50 s. A tenth of a second across the whole range. The lift
+   and brake thresholds only bite inside a narrow band of medium corners, so the
+   rest of the lap is identical whoever is driving, and every apparent pace
+   difference in a race was traffic luck. A purely behavioural pecking order is
+   just a random one wearing a nicer name. */
 export const RIVALS = [
-  { name: 'VESK',    color: 0x2f6f9e, skill: 0.94, line: -0.35, react: 0.10 },
-  { name: 'ORRIN',   color: 0xd9a13a, skill: 0.86, line:  0.40, react: 0.16 },
-  { name: 'HALLOW',  color: 0x7a4f9c, skill: 0.79, line: -0.55, react: 0.22 },
-  { name: 'BRAKE',   color: 0x3f8f5c, skill: 0.71, line:  0.60, react: 0.30 },
+  { name: 'VESK',   color: 0x2f6f9e, skill: 0.94, pace: 1.02, line: -0.35, react: 0.10 },
+  { name: 'ORRIN',  color: 0xd9a13a, skill: 0.86, pace: 1.06, line:  0.40, react: 0.16 },
+  { name: 'HALLOW', color: 0x7a4f9c, skill: 0.79, pace: 1.11, line: -0.55, react: 0.22 },
+  { name: 'BRAKE',  color: 0x3f8f5c, skill: 0.71, pace: 1.17, line:  0.60, react: 0.30 },
 ];
+
 
 export function createField() {
   const carts = [];
@@ -48,7 +62,7 @@ export function createField() {
 
   RIVALS.forEach((r, i) => {
     const c = SIM.create();
-    c.name = r.name; c.color = r.color; c.ai = { ...r };
+    c.name = r.name; c.color = r.color; c.ai = { ...r }; c.pace = r.pace;
     c.isPlayer = false;
     carts.push(c);
   });
@@ -76,45 +90,69 @@ export function createField() {
    -------------------------------------------------------------------------- */
 function driveAI(c, field, dt) {
   const ai = c.ai;
-  const kv = T.kvAt(c.s), kh = T.khAt(c.s), pitch = T.pitchAt(c.s);
+  const kh = T.khAt(c.s), pitch = T.pitchAt(c.s);
   const grip = T.gripAt(c.s);
-  const edge = T.HALF_W - 1.2;
+  const edge = T.halfWAt(c.s) - 1.4;
 
-  /* Reaction lag, so a low-skill rival is visibly late rather than merely
-     slower. Sampled from the road a little BEHIND where they actually are. */
-  ai.lag = (ai.lag ?? 0) + dt;
-  const lagged = Math.max(0, c.s - c.v * ai.react);
-  const kvSeen = T.kvAt(lagged);
+  /* What is coming, seen through their reaction time. A low-skill rival is
+     visibly LATE rather than merely slower — they lift and brake after the
+     corner has already started, which you can watch happen. */
+  const look = Math.max(10, c.v * (0.95 - 0.35 * ai.skill));
+  const lead = Math.min(T.LENGTH - 1, c.s + look);
+  const khA = Math.abs(T.khAt(lead));
+  const need = c.v * c.v * khA;
 
-  /* Line: hug the inside of the corner, by as much as their skill allows, plus
-     a personal bias so the field does not converge into one file. */
-  const ahead = T.khAt(Math.min(T.LENGTH - 1, c.s + Math.max(8, c.v * 0.8)));
-  let target = -Math.sign(ahead) * edge * 0.55 * ai.skill + ai.line * edge * 0.5;
+  /* Line: hug the inside of the corner, plus a personal bias so the field does
+     not converge into a single file. */
+  const dirAhead = T.khAt(Math.min(T.LENGTH - 1, c.s + look * 0.6));
+  let target = -Math.sign(dirAhead) * edge * 0.78 * ai.skill + ai.line * edge * 0.40;
 
-  /* Avoidance: if someone is just ahead and on my line, pick a side. Rivals
-     that never did this simply drove through each other in a train. */
+  /* Avoidance. Considers everyone nearby rather than only the first car found,
+     and picks whichever side actually has room — a rival that always swerved
+     the same way just herded the pack into one corner of the road and ground
+     there. `boxed` then tells them to sit and wait instead of leaning on the
+     car in front. */
+  let boxed = false, blocker = null;
   for (const o of field.carts) {
-    if (o === c) continue;
+    if (o === c || o.done) continue;
     const ds = o.s - c.s;
-    if (ds > 0 && ds < 16 && Math.abs(o.u - c.u) < 2.6) {
-      target = o.u + (o.u >= 0 ? -3.4 : 3.4);
-      break;
+    if (ds > 0 && ds < 20 && Math.abs(o.u - c.u) < 3.0) {
+      if (!blocker || ds < blocker.s - c.s) blocker = o;
     }
   }
+  if (blocker) {
+    const room = (side) => {
+      const lane = blocker.u + side * 3.6;
+      if (Math.abs(lane) > edge) return -1;
+      let free = edge - Math.abs(lane);
+      for (const o of field.carts) {
+        if (o === c || o.done) continue;
+        if (Math.abs(o.s - c.s) < 20 && Math.abs(o.u - lane) < 2.6) free -= 5;
+      }
+      return free;
+    };
+    const L = room(-1), R = room(1);
+    if (L < 0 && R < 0) { boxed = true; target = c.u; }
+    else target = blocker.u + (L >= R ? -3.6 : 3.6);
+  }
   target = Math.max(-edge, Math.min(edge, target));
-  const steer = Math.max(-1, Math.min(1, (target - c.u) * 0.85));
 
-  /* Brake for a corner they cannot hold. Skill decides how close to the real
-     limit they are willing to run. */
-  const need = c.v * c.v * Math.abs(kh);
-  const canHold = grip * 17.0 * (0.72 + 0.30 * ai.skill);
-  const brake = need > canHold && pitch < 0.02;
+  /* Tuck is the whole trade: fast in a line, no steering. A good rival lifts
+     early for a corner; a poor one stays tucked into it and runs wide. */
+  /* Where they lift. This is the number that sets pace, and it is deliberately
+     bracketed around the reference racer's 9.0: the best rival is a shade
+     braver, the worst clearly timid, so the field has a pecking order you can
+     see rather than four drivers within a second of each other. */
+  const tuck = need < grip * (2.0 + 6.0 * ai.skill);
 
   return {
-    tuck: kvSeen < SIM.tune.pumpKvMin * (2.0 - ai.skill),
-    steer,
-    brake,
-    thrust: c.charge > 0.25 && pitch > -0.16 && !brake,
+    tuck,
+    steer: Math.max(-1, Math.min(1, (target - c.u) * 0.9)),
+    brake: need > grip * (24.0 - 6.0 * ai.skill) && pitch < 0.02,
+    /* Poor drivers dribble the boost away in slivers instead of banking it. */
+    /* Do not shove the car in front — banked boost is worth more than a
+       rear-end that costs you both. */
+    thrust: !boxed && c.charge > (0.75 - 0.45 * ai.skill) && pitch > -0.18,
   };
 }
 
@@ -178,7 +216,7 @@ function interact(field, dt) {
      have to hold rather than a button that fires. */
   for (const c of carts) {
     c.mod = c.mod || {};
-    c.mod.drag = c.drafting ? K.draftDrag : 1;
+    c.mod.drag = (c.drafting ? K.draftDrag : 1) * (c.pace ?? 1);
     if (c.drafting && !c.air) {
       c.charge = Math.min(SIM.tune.chargeMax, c.charge + K.draftCharge * dt);
     }
@@ -237,15 +275,35 @@ export function sim(opts = {}) {
   const field = createField();
   const dt = 1 / 120;
   const you = field.you;
-  /* Drive the player seat with a reference rival so the result describes the
-     FIELD and not a human. Assigned once — rebuilding it every tick reset the
-     reaction-lag state and produced a driver that never settled. */
-  you.ai = { skill: opts.skill ?? 0.88, line: 0, react: 0.14 };
+  /* Drive the player seat with a BEGINNER by default. Balancing the field
+     against a good policy is exactly how the rivals ended up quicker than any
+     human could be — the question is whether a mediocre driver has a race, not
+     whether a robot does. */
+  const beginner = (S) => ({
+    tuck: true,
+    steer: Math.max(-1, Math.min(1, -S.u * 0.42)) * 0.7,
+    brake: false,
+    thrust: S.charge > 0.4,
+  });
+  /* Three reference drivers, because one number cannot answer "is this fair".
+     beginner = the floor a first run should clear; good = a competent human,
+     who ought to be able to win from the back; ace = the ceiling. */
+  const asRival = (skill) => {
+    you.ai = { skill, line: 0, react: 0.12 };
+    /* A human uses the tow and spends boost to PASS. The rival policy declines
+       to thrust while boxed in, which is polite and correct for them and made
+       the reference driver unable to overtake anything — every skill level
+       finished fifth by exactly the same margin. */
+    return () => ({ ...driveAI(you, field, dt), thrust: you.charge > 0.3 });
+  };
+  const drivePlayer = opts.player === 'good' ? asRival(0.90)
+                    : opts.player === 'ace' ? asRival(0.99)
+                    : beginner;
   let steps = 0;
   const lead = [];
 
   while (field.finishers.length < field.carts.length && steps++ < 90000) {
-    step(field, dt, driveAI(you, field, dt));
+    step(field, dt, drivePlayer(you));
     if (steps % 240 === 0) lead.push(order(field)[0].name);
   }
   const changes = lead.filter((n, i) => i && n !== lead[i - 1]).length;
