@@ -38,9 +38,10 @@ let renderer, scene, camera, persp, cart, rider, blob, reticle, tether, sun, hem
 export const post = POST.opts;
 /* Base field of view for the chase and cockpit cameras. The frame() loop adds a
    speed kick on top of this, so it is a BASE, not the value in use. */
-let fovBase = 62;
+let fovBase = 62, fovNow = 62;
 export const setFov = (f) => {
   fovBase = Math.max(50, Math.min(95, f || 62));
+  fovNow = fovBase;
   if (persp) { persp.fov = fovBase; persp.updateProjectionMatrix(); }
 };
 export const getFov = () => fovBase;
@@ -1860,6 +1861,22 @@ function makeCart(col) {
   wheelM.rotation.x = 1.15;
   rider.add(wheelM);
 
+  /* Boost flame. Spending boost was a bar going down and nothing else; a flame
+     out of the pipes it is already fitted with is the obvious place to say it.
+     Additive and unlit so it reads as light rather than as a painted cone. */
+  const flames = [];
+  const flameG = new THREE.ConeGeometry(0.13, 0.85, 7).rotateX(Math.PI / 2);
+  for (const sx of [-0.40, 0.40]) {
+    const fl = new THREE.Mesh(flameG, new THREE.MeshBasicMaterial({
+      color: 0xffb257, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false, fog: false }));
+    fl.position.set(sx, 0.60, -1.95);
+    fl.visible = false;
+    G.add(fl);
+    flames.push(fl);
+  }
+  cart.userData.flames = flames;
+
   rider.add(torso, shoulders, helmet, visor, chin, crest);
   rider.position.set(0, 0.50, -0.30);
   G.add(rider);
@@ -2046,7 +2063,11 @@ function applyCamSize(size) {
   camera.top = size / 2; camera.bottom = -size / 2;
   camera.updateProjectionMatrix();
   persp.aspect = a;
-  persp.fov = view === 'cockpit' ? 74 : 62;
+  /* Deliberately does NOT touch fov. This runs every frame from the camera
+     block, and while it did set fov the speed kick below was reset to base
+     before each ease step — it converged one lerp's worth and stuck there
+     (measured 62.8 where it should have reached 70+). fov is owned by the
+     frame loop and by setFov, nothing else. */
   persp.updateProjectionMatrix();
 }
 
@@ -2094,6 +2115,20 @@ function placeCart(group, St, dt) {
 
   /* ---- the part that actually makes it look like a car ------------------- */
   const A = group.userData.anim, G = group.userData.body;
+
+  /* Flames flicker on a fast sine rather than random(), so every cart on screen
+     is not flickering on the same frame — and so it does not strobe. */
+  const fl = group.userData.flames;
+  if (fl) {
+    const on = !!(St.input && St.input.boost) && St.charge > 0.02;
+    A.flame = (A.flame || 0) + dt * 26;
+    for (let i = 0; i < fl.length; i++) {
+      fl[i].visible = on;
+      if (!on) continue;
+      const w = 0.72 + 0.28 * Math.sin(A.flame + i * 2.1);
+      fl[i].scale.set(w, w, 0.8 + 0.5 * Math.sin(A.flame * 0.7 + i));
+    }
+  }
   const k = Math.min(1, dt * 8);
 
   /* Body rolls OUT of the corner, rider leans IN. Two objects disagreeing is
@@ -2255,6 +2290,18 @@ export function frame(S, dt) {
     applyCamSize(camSize);
     shakeT += dt * 43;
     const amp = opts.shake ? Math.pow(Math.min(1, S.v / 30), 2) * 0.10 : 0;
+
+    /* Speed language. The lens widens with speed and kicks again on boost, and
+       it EASES back rather than snapping, so spending boost is something you
+       feel in the frame and not only in the bar. Without this the game looked
+       identical at 30 mph and at 75. */
+    const base = view === 'cockpit' ? fovBase + 12 : fovBase;
+    const wantFov = base
+      + Math.max(0, Math.min(1, (S.v - 12) / 24)) * 7.5
+      + (S.input && S.input.boost && S.charge > 0.02 ? 6.0 : 0);
+    fovNow += (wantFov - fovNow) * Math.min(1, dt * 4.0);
+    persp.fov = fovNow;
+    persp.updateProjectionMatrix();
 
     if (view === 'chase') {
       /* Behind and above, lagging on a spring so the cart leads the camera
