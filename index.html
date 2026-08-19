@@ -25,22 +25,42 @@
   canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
   button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 
-  /* A vignette costs one element and does more for the image than any post
-     chain — and it avoids rendering to a target, where three.js would skip
-     tone mapping and quietly wash the whole scene out. */
+  /* The post chain does the vignette now (post.js). This one is kept only as a
+     very faint corner darken for when post is switched off — stacked on top of
+     the shader vignette the two of them made a black tunnel. */
   #vig{position:fixed;inset:0;pointer-events:none;z-index:2;
-       background:radial-gradient(ellipse 78% 72% at 50% 46%,
-                  rgba(0,0,0,0) 42%, rgba(6,8,11,.30) 76%, rgba(6,8,11,.62) 100%)}
+       background:radial-gradient(ellipse 82% 76% at 50% 46%,
+                  rgba(0,0,0,0) 52%, rgba(6,8,11,.10) 82%, rgba(6,8,11,.22) 100%)}
 
   .hud{position:fixed;pointer-events:none;user-select:none;z-index:5;
        text-shadow:0 1px 3px rgba(0,0,0,.95),0 0 20px rgba(0,0,0,.7);line-height:1.35}
   .lbl{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
   .num{font-variant-numeric:tabular-nums}
+  /* Panels. Bare text floating on the scene is the single most prototype-
+     looking thing a HUD can do: it reads as debug output. A dark glass slab
+     with one hairline edge costs nothing and makes it read as a designed
+     instrument — and it also fixes legibility over snow, which bare cream text
+     did not have. */
+  .pane{background:linear-gradient(180deg,rgba(9,12,16,.72),rgba(9,12,16,.52));
+        border:1px solid var(--edge);border-radius:10px;padding:10px 13px 11px;
+        backdrop-filter:blur(9px) saturate(1.1);
+        -webkit-backdrop-filter:blur(9px) saturate(1.1);
+        box-shadow:0 6px 22px rgba(0,0,0,.34)}
   #hudWrap{opacity:0;transition:opacity .45s}
   #hudWrap.on{opacity:1}
 
-  #speed{left:26px;bottom:24px}
+  #speed{left:26px;bottom:24px;width:210px}
   #speed .v{font-size:56px;line-height:.9;letter-spacing:-.02em}
+  /* A speed bar under the number. The digits tell you the value; the bar tells
+     you where you are in the range, which is the thing you can read without
+     looking away from the road. */
+  #speed .track{position:relative;height:5px;margin-top:9px;border-radius:3px;
+       background:rgba(242,235,222,.14);overflow:hidden}
+  #speed .sfill{position:absolute;inset:0 auto 0 0;width:0;border-radius:3px;
+       background:linear-gradient(90deg,var(--cold),var(--warm));
+       transition:width .08s linear}
+  #speed .red{position:absolute;top:0;bottom:0;left:78%;right:0;
+       background:rgba(194,69,46,.34)}
   #speed .u{font-size:12px;letter-spacing:.22em;color:var(--dim);margin-left:4px}
   #speed .seg{margin-top:8px;font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--warm)}
 
@@ -71,6 +91,19 @@
   #prof .cap.b{bottom:-16px}
 
   /* standings */
+  #order{right:26px;top:22px;width:196px}
+  #order h4{font-size:10px;letter-spacing:.24em;text-transform:uppercase;
+       color:var(--faint);font-weight:400;margin-bottom:7px}
+  #order .ln{display:flex;align-items:baseline;gap:7px;font-size:12px;
+       line-height:1.62;color:var(--dim)}
+  #order .ln .i{width:13px;text-align:right;color:var(--faint);
+       font-variant-numeric:tabular-nums}
+  #order .ln .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #order .ln .dt{font-variant-numeric:tabular-nums;font-size:11px;color:var(--faint)}
+  #order .ln.me{color:var(--ink)}
+  #order .ln.me .i,#order .ln.me .dt{color:var(--warm)}
+  #order .ln .pip{width:7px;height:7px;border-radius:2px;flex:none}
+
   #stand{left:50%;top:20px;transform:translateX(-50%);text-align:center}
   #stand .p{font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
   #stand .of{font-size:14px;color:var(--dim);margin-left:2px}
@@ -251,6 +284,42 @@
       <div class="rd">Grit off the rear wheels</div></div><div class="sw"></div></div>
   </div>
 
+  <div class="grp"><h3>image</h3>
+    <div class="row" data-post="bloom"><div><div class="rn">Bloom</div>
+      <div class="rd">Glow off the bright edges &mdash; snow, sky, paint</div></div><div class="sw"></div></div>
+    <div class="row" data-post="grain"><div><div class="rn">Film grain</div>
+      <div class="rd">Breaks up the flat shading</div></div><div class="sw"></div></div>
+    <div class="row" data-post="vignette"><div><div class="rn">Vignette</div>
+      <div class="rd">Darkens the corners toward the road</div></div><div class="sw"></div></div>
+    <div class="row" data-post="aberration"><div><div class="rn">Lens fringing</div>
+      <div class="rd">Colour split at the edges, growing with speed</div></div><div class="sw"></div></div>
+    <div class="row" data-post="speedLines"><div><div class="rn">Speed lines</div>
+      <div class="rd">Radial streaks once you are really moving</div></div><div class="sw"></div></div>
+    <div class="row" style="cursor:default"><div><div class="rn">Field of view</div>
+      <div class="rd">Wider feels faster and shows more of the corner</div></div>
+      <div class="seg3" id="fovSeg">
+        <button data-fov="55">narrow</button>
+        <button data-fov="62">normal</button>
+        <button data-fov="74">wide</button>
+        <button data-fov="86">very wide</button>
+      </div></div>
+  </div>
+
+  <div class="grp"><h3>readout</h3>
+    <div class="row" style="cursor:default"><div><div class="rn">Speed units</div>
+      <div class="rd">&nbsp;</div></div>
+      <div class="seg3" id="unitSeg">
+        <button data-unit="mph">mph</button>
+        <button data-unit="kmh">km/h</button>
+      </div></div>
+    <div class="row" data-hud="order"><div><div class="rn">Running order</div>
+      <div class="rd">Live standings and gaps, top right</div></div><div class="sw"></div></div>
+    <div class="row" data-hud="prof"><div><div class="rn">Descent profile</div>
+      <div class="rd">How far down the hill you are</div></div><div class="sw"></div></div>
+    <div class="row" data-hud="tip"><div><div class="rn">Control hints</div>
+      <div class="rd">The key list along the bottom</div></div><div class="sw"></div></div>
+  </div>
+
   <div class="grp"><h3>display</h3>
     <div class="row" style="cursor:default"><div><div class="rn">Resolution</div>
       <div class="rd">Drop this first if the frame rate suffers</div></div>
@@ -288,18 +357,19 @@
 
 <!-- -------------------------------- hud -------------------------------- -->
 <div id="hudWrap">
-  <div class="hud" id="speed">
-    <div><span class="v num" id="mph">0</span><span class="u">MPH</span></div>
+  <div class="hud pane" id="speed">
+    <div><span class="v num" id="mph">0</span><span class="u" id="mphU">MPH</span></div>
+    <div class="track"><div class="red"></div><div class="sfill" id="sfill"></div></div>
     <div class="seg" id="seg">THE GATE</div>
   </div>
 
-  <div class="hud" id="load">
+  <div class="hud pane" id="load">
     <div class="lbl">grip</div>
     <div class="bar"><div class="fill" id="loadfill"></div><div class="one" style="left:62%"></div></div>
     <div class="cue" id="cue">tuck</div>
   </div>
 
-  <div class="hud" id="chg">
+  <div class="hud pane" id="chg">
     <div class="top"><span class="lbl">boost</span><span class="n" id="chgnum">0.0s</span></div>
     <div class="bar"><div class="fill" id="chgfill"></div></div>
     <div class="cue">SHIFT &mdash; spend</div>
@@ -323,6 +393,7 @@
   <div class="hud" id="count"></div>
 
   <div class="hud" id="flash"><div class="n" id="flashn">+0.0</div><div class="t">pump</div></div>
+  <div class="hud pane" id="order"><h4>running order</h4><div id="orderList"></div></div>
   <div class="hud" id="tip">w — go &middot; s — brake &middot; a/d — steer &middot; space — drift &middot; shift — boost &middot; c — camera &middot; m — sound</div>
 </div>
 

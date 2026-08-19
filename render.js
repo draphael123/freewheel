@@ -36,6 +36,14 @@ export function setRes(scale) {
 
 let renderer, scene, camera, persp, cart, rider, blob, reticle, tether, sun, hemi, fog;
 export const post = POST.opts;
+/* Base field of view for the chase and cockpit cameras. The frame() loop adds a
+   speed kick on top of this, so it is a BASE, not the value in use. */
+let fovBase = 62;
+export const setFov = (f) => {
+  fovBase = Math.max(50, Math.min(95, f || 62));
+  if (persp) { persp.fov = fovBase; persp.updateProjectionMatrix(); }
+};
+export const getFov = () => fovBase;
 export const VIEWS = ['iso', 'chase', 'cockpit'];
 let view = 'iso';
 export const setView = (v) => { view = VIEWS.includes(v) ? v : 'iso'; resize(); };

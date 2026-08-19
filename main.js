@@ -45,11 +45,42 @@ function armAudio() { AUDIO.unlock(); AUDIO.setMuted(muted); }
 addEventListener('pointerdown', armAudio, { once: true });
 addEventListener('keydown', armAudio, { once: true });
 
+/* Post-chain toggles are NUMBERS, not booleans — a strength of 0 is "off". The
+   defaults are captured once at boot so a toggle can restore the tuned value
+   rather than some hardcoded guess that drifts out of step with post.js. */
+const POST_ON = { ...R.post };
+/* Only these are user toggles. threshold/contrast/saturation are tuning, not
+   preferences, and persisting them as booleans would let a stale save clobber
+   a retune. */
+const POST_KEYS = ['bloom', 'grain', 'vignette', 'aberration', 'speedLines'];
+let units = localStorage.getItem('fw.units') === 'kmh' ? 'kmh' : 'mph';
+let fov = +(localStorage.getItem('fw.fov') || 62);
+const hudShow = { order: true, prof: true, tip: true };
+
+function applyHud() {
+  for (const k of Object.keys(hudShow)) {
+    const n = el(k);
+    if (n) n.style.display = hudShow[k] ? '' : 'none';
+  }
+}
+
 function loadOpts() {
   try {
     const o = JSON.parse(localStorage.getItem(SAVED) || '{}');
     for (const k of Object.keys(R.opts)) if (k in o) R.opts[k] = !!o[k];
   } catch { /* a corrupt blob is not worth a crash; defaults are fine */ }
+  try {
+    const q = JSON.parse(localStorage.getItem('fw.post') || '{}');
+    for (const k of POST_KEYS) {
+      if (k in q) R.post[k] = q[k] ? POST_ON[k] : 0;
+    }
+  } catch { /* ditto */ }
+  try {
+    const hv = JSON.parse(localStorage.getItem('fw.hud') || '{}');
+    for (const k of Object.keys(hudShow)) if (k in hv) hudShow[k] = !!hv[k];
+  } catch { /* ditto */ }
+  R.setFov(fov);
+  applyHud();
 }
 function saveOpts() {
   localStorage.setItem(SAVED, JSON.stringify(R.opts));
@@ -57,6 +88,12 @@ function saveOpts() {
   localStorage.setItem('fw.diff', RACE.difficulty);
   localStorage.setItem('fw.view', R.getView());
   localStorage.setItem('fw.mute', muted ? '1' : '0');
+  localStorage.setItem('fw.units', units);
+  localStorage.setItem('fw.fov', String(fov));
+  const q = {};
+  for (const k of POST_KEYS) q[k] = R.post[k] > 0;
+  localStorage.setItem('fw.post', JSON.stringify(q));
+  localStorage.setItem('fw.hud', JSON.stringify(hudShow));
 }
 function syncSettingsUI() {
   document.querySelectorAll('[data-opt]').forEach((row) => {
@@ -71,6 +108,18 @@ function syncSettingsUI() {
   document.querySelectorAll('#viewSeg button').forEach((b) => {
     b.classList.toggle('on', b.dataset.view === R.getView());
   });
+  document.querySelectorAll('[data-post]').forEach((row) => {
+    row.classList.toggle('on', R.post[row.dataset.post] > 0);
+  });
+  document.querySelectorAll('[data-hud]').forEach((row) => {
+    row.classList.toggle('on', !!hudShow[row.dataset.hud]);
+  });
+  document.querySelectorAll('#fovSeg button').forEach((b) => {
+    b.classList.toggle('on', +b.dataset.fov === fov);
+  });
+  document.querySelectorAll('#unitSeg button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.unit === units);
+  });
   el('muteRow').classList.toggle('on', !muted);
 }
 document.querySelectorAll('[data-opt]').forEach((row) => {
@@ -78,6 +127,25 @@ document.querySelectorAll('[data-opt]').forEach((row) => {
     R.opts[row.dataset.opt] = !R.opts[row.dataset.opt];
     syncSettingsUI(); saveOpts();
   });
+});
+document.querySelectorAll('[data-post]').forEach((row) => {
+  row.addEventListener('click', () => {
+    const k = row.dataset.post;
+    R.post[k] = R.post[k] > 0 ? 0 : POST_ON[k];
+    syncSettingsUI(); saveOpts();
+  });
+});
+document.querySelectorAll('[data-hud]').forEach((row) => {
+  row.addEventListener('click', () => {
+    hudShow[row.dataset.hud] = !hudShow[row.dataset.hud];
+    applyHud(); syncSettingsUI(); saveOpts();
+  });
+});
+document.querySelectorAll('#fovSeg button').forEach((b) => {
+  b.addEventListener('click', () => { fov = +b.dataset.fov; R.setFov(fov); syncSettingsUI(); saveOpts(); });
+});
+document.querySelectorAll('#unitSeg button').forEach((b) => {
+  b.addEventListener('click', () => { units = b.dataset.unit; syncSettingsUI(); saveOpts(); });
 });
 document.querySelectorAll('#resSeg button').forEach((b) => {
   b.addEventListener('click', () => { res = +b.dataset.res; R.setRes(res); syncSettingsUI(); saveOpts(); });
@@ -222,8 +290,16 @@ drawProfile();
 let flashT = 0, lastPumpShown = 0, countdown = 0, lastCount = 9;
 let snap = { bale: 0, wall: 0, spin: 0, land: 0 }, wasBoosting = false;
 
+/* Rebuilt only when the order actually changes. Writing five rows of innerHTML
+   at 60 Hz is both wasteful and visibly janky when a name is mid-ellipsis. */
+let lastOrderKey = '';
+
 function updateHUD(dt) {
-  el('mph').textContent = Math.round(S.v * 2.2369);
+  const kph = units === 'kmh';
+  el('mph').textContent = Math.round(S.v * (kph ? 3.6 : 2.2369));
+  el('mphU').textContent = kph ? 'KM/H' : 'MPH';
+  el('sfill').style.width =
+    Math.max(0, Math.min(100, (S.v / 34) * 100)) + '%';
   el('seg').textContent = T.NAMES[T.segAt(S.s)];
 
   /* Grip: how much of what the tyres can supply the corner is already using.
@@ -257,6 +333,36 @@ function updateHUD(dt) {
   el('gap').classList.toggle('lead', !gap);
   el('draft').classList.toggle('on', !!S.drafting || Math.abs(S.drift) > SIM.tune.driftMin);
   el('draft').textContent = Math.abs(S.drift) > SIM.tune.driftMin ? 'drifting' : 'tow';
+
+  /* The running order. "1 / 5" tells you where you are; it does not tell you
+     WHO is ahead or by how much, which is the thing that makes you push. */
+  const ord = RACE.order(field);
+  const key = ord.map((c) => c.name || 'YOU').join('|') + '/' + ord.length;
+  if (key !== lastOrderKey) {
+    lastOrderKey = key;
+    el('orderList').innerHTML = ord.map((c, i) => {
+      const me = c === S || c.isPlayer || !c.name;
+      const col = c.color != null
+        ? '#' + c.color.toString(16).padStart(6, '0') : '#c2452e';
+      return `<div class="ln${me ? ' me' : ''}"><span class="i">${i + 1}</span>`
+           + `<span class="pip" style="background:${col}"></span>`
+           + `<span class="nm">${me ? 'YOU' : c.name}</span>`
+           + `<span class="dt" data-i="${i}"></span></div>`;
+    }).join('');
+  }
+  /* Deltas every frame, text only — cheap, and no layout thrash. */
+  const meI = ord.indexOf(S);
+  const rows = el('orderList').children;
+  for (let i = 0; i < rows.length && i < ord.length; i++) {
+    const dt2 = rows[i].querySelector('.dt');
+    if (!dt2) continue;
+    if (i === meI || meI < 0) { dt2.textContent = ''; continue; }
+    /* Magnitude only. The row's position already says whether they are ahead
+       of you or behind, and a signed number next to a name reads ambiguously —
+       "+1.3" is just as easily "1.3 ahead" as "1.3 behind". */
+    const d = Math.abs(ord[i].s - ord[meI].s) / Math.max(6, S.v);
+    dt2.textContent = d.toFixed(1) + 's';
+  }
 
   const i = Math.min(PROF.length - 1, Math.floor((S.s / T.LENGTH) * (PROF.length - 1)));
   el('profdone').setAttribute('points', PROF.slice(0, i + 1).map((p) => p.join(',')).join(' '));
