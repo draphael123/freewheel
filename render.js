@@ -641,6 +641,21 @@ function buildBuildings(tr, mtx, q) {
     new THREE.MeshLambertMaterial({ color: 0x4c4740 }), CAP * cols.length);
   walls.forEach((w) => { w.castShadow = w.receiveShadow = true; });
   roofs.castShadow = true; plinths.receiveShadow = true;
+  /* Openings face ACROSS the street, so the plane is pre-rotated to face +X of
+     the house basis and drawn double-sided — which side of the road a house is
+     on flips the outward normal. */
+  const WCAP = 420;
+  const winG = new THREE.PlaneGeometry(0.95, 1.15).rotateY(Math.PI / 2);
+  const wins = new THREE.InstancedMesh(winG, new THREE.MeshLambertMaterial({
+    color: 0x2e3742, side: THREE.DoubleSide }), WCAP);
+  const doorG = new THREE.PlaneGeometry(1.0, 1.0).rotateY(Math.PI / 2);
+  const doors = new THREE.InstancedMesh(doorG, new THREE.MeshLambertMaterial({
+    color: 0x53341f, side: THREE.DoubleSide }), WCAP);
+  const chims = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshLambertMaterial({ color: 0x8a7f70 }), WCAP);
+  chims.castShadow = true;
+  let nw = 0, nd = 0, nch = 0;
+
   const n = cols.map(() => 0);
   let nr = 0;
 
@@ -653,7 +668,8 @@ function buildBuildings(tr, mtx, q) {
   for (let s0 = 8; s0 < T.LENGTH - 8; s0 += 2.5) {
     const Z = TH.zones[T.zoneAt(s0)] || TH.zones.forest;
     if (!Z.blds || T.tunnelAt(s0) || T.bridgeAt(s0)) continue;
-    const { nrm, tan } = basisAt(s0);
+    const { nrm, tan, right } = basisAt(s0);
+    const nrm0 = nrm, tan0 = tan, right0 = right;
     q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
       new THREE.Vector3().crossVectors(nrm, tan).normalize(), nrm,
       tan.clone().normalize()));
@@ -686,17 +702,69 @@ function buildBuildings(tr, mtx, q) {
       const top = new THREE.Vector3(c.x, topY, c.z);
       mtx.compose(mid, q, new THREE.Vector3(w, H, d));
       walls[k].setMatrixAt(n[k]++, mtx);
-      mtx.compose(new THREE.Vector3(c.x, botY + (topY - botY) * 0.5 - h * 0.5 + 0.55, c.z),
+      /* Sit the plinth on the BASE of the wall. It used to be placed relative
+         to the nominal house height h rather than the actual stretched height
+         H, so anywhere the ground fell away it floated in a band across the
+         middle of the wall. */
+      mtx.compose(new THREE.Vector3(c.x, botY + Math.min(1.4, H) * 0.5, c.z),
                   q, new THREE.Vector3(w * 1.06, Math.min(1.4, H), d * 1.06));
       plinths.setMatrixAt(nr, mtx);
-      mtx.compose(top, q, new THREE.Vector3(w * 1.14, w * 0.42, d * 1.06));
+      mtx.compose(top, q, new THREE.Vector3(w * 1.07, w * 0.38, d * 1.04));
       roofs.setMatrixAt(nr++, mtx);
-      nextFree[side] = s0 + d + 1.2 + Math.random() * 2.5;
+
+      /* Windows, a door and a chimney. This is the difference between a
+         village and a row of boxes: without openings a wall has no SIZE, so
+         the whole street reads as untextured blocking. They go on the
+         street-facing face only — nothing else is ever seen.
+
+         `out` is the direction from the house toward the road. The house sits
+         at u = side*off, the road at u = 0, so it is -side along `right`.
+         Windows spread along the FRONTAGE, which runs along `tan`. */
+      const out = right0.clone().normalize().multiplyScalar(-side);
+      const along = tan0.clone().normalize();
+      const faceX = w * 0.5 + 0.05;
+      const rows = H > 8.0 ? 2 : 1;
+      const wcols = d > 6.6 ? 2 : 1;
+      for (let ry = 0; ry < rows; ry++) {
+        for (let cx = 0; cx < wcols; cx++) {
+          if (nw >= WCAP) break;
+          const wy = topY - 1.6 - ry * 2.7;
+          if (wy - 0.7 < botY) continue;
+          const dz = wcols === 1 ? 0 : (cx - 0.5) * d * 0.46;
+          const pw = new THREE.Vector3(c.x, wy, c.z)
+            .addScaledVector(out, faceX)
+            .addScaledVector(along, dz);
+          mtx.compose(pw, q, new THREE.Vector3(1, 1, 1));
+          wins.setMatrixAt(nw++, mtx);
+        }
+      }
+      if (nd < WCAP) {
+        const pd = new THREE.Vector3(c.x, Math.max(botY + 1.0, c.y - 1.15), c.z)
+          .addScaledVector(out, faceX)
+          .addScaledVector(along, d * 0.22);
+        mtx.compose(pd, q, new THREE.Vector3(0.9, 2.0, 1));
+        doors.setMatrixAt(nd++, mtx);
+      }
+      if (nch < WCAP) {
+        const ch = new THREE.Vector3(c.x, topY + w * 0.34, c.z)
+          .addScaledVector(along, d * 0.28);
+        mtx.compose(ch, q, new THREE.Vector3(0.60, 1.6, 0.60));
+        chims.setMatrixAt(nch++, mtx);
+      }
+      /* Clearance has to cover HALF of this house plus HALF of whatever comes
+         next, and depth varies by 3.5 m. The old rule (`s0 + d`) left less
+         than that whenever the next house was the deeper one, which is why
+         the village had roofs growing through each other. */
+      nextFree[side] = s0 + d * 0.5 + 4.3 + 2.7 + Math.random() * 3.2;
     }
   }
   walls.forEach((w, k) => { w.count = n[k]; courseRoot.add(w); });
   roofs.count = nr; plinths.count = nr;
+  wins.count = nw; doors.count = nd; chims.count = nch;
   courseRoot.add(roofs, plinths);
+  if (nw) courseRoot.add(wins);
+  if (nd) courseRoot.add(doors);
+  if (nch) courseRoot.add(chims);
 }
 
 /* A deck of cloud just below a stretch of road with nothing under it. Two
@@ -710,7 +778,7 @@ function buildCloudDeck() {
     const mid = (run.a + run.b) / 2;
     const c = v3(T.surfaceAt(mid, 0));
     for (let layer = 0; layer < 2; layer++) {
-      const g = new THREE.PlaneGeometry(420, 420, 1, 1);
+      const g = new THREE.PlaneGeometry(1100, 1100, 1, 1);
       g.rotateX(-Math.PI / 2);
       const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
         color: 0xf2f4f8, transparent: true, opacity: layer ? 0.55 : 0.82,
@@ -1179,29 +1247,79 @@ function buildFurniture(tr) {
   }
   crowds.forEach((m, k) => { m.count = cn[k]; if (cn[k]) courseRoot.add(m); });
 
-  /* ---- bunting: cheap, dense, and always within a metre of the verge ------ */
-  const flagG = new THREE.PlaneGeometry(0.9, 0.62);
-  const flags = new THREE.InstancedMesh(flagG,
-    new THREE.MeshLambertMaterial({ color: TH.post.a, side: THREE.DoubleSide }), 700);
-  let n = 0;
-  for (let s0 = 20; s0 < T.LENGTH - 20 && n < 700; s0 += 3.2) {
-    const { nrm, right, tan } = basisAt(s0);
-    /* Face ACROSS the road, not along it. Oriented like the banners the flags
-       were edge-on to a camera that sits beside the road, and 700 of them
-       rendered as a faint dotted line. */
-    q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
-      tan.clone().normalize(), nrm, right));
+  /* ---- bunting: poles, a cord that sags, and flags hanging FROM it -------- */
+  /* This was 700 loose quads floating 2.3 m over the verge with nothing holding
+     them up — the most obvious piece of floating geometry in the game, and the
+     kind of thing that reads as "unfinished" instantly. Bunting is the pole and
+     the string; the flags are the cheap part. Skipped in tunnels, where the
+     poles would grow through the roof. */
+  const POLE_GAP = 18, POLE_H = 3.5, SAG = 0.85, PER_SPAN = 4;
+  const poles = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(0.11, POLE_H, 0.11),
+    new THREE.MeshLambertMaterial({ color: 0x6b6156 }), 420);
+  const cords = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 0.04, 0.04),
+    new THREE.MeshLambertMaterial({ color: 0x3a352e }), 1400);
+  const flagG = new THREE.PlaneGeometry(0.60, 0.48);
+  flagG.translate(0, -0.24, 0);                       // pivot at the top edge
+  const flagSet = [TH.post.a, TH.post.b].map((c) => new THREE.InstancedMesh(
+    flagG, new THREE.MeshLambertMaterial({ color: c, side: THREE.DoubleSide }), 760));
+  poles.castShadow = true;
+  let np = 0, nc = 0;
+  const nf = [0, 0];
+  const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3();
+  const XAX = new THREE.Vector3(1, 0, 0);
+
+  /* Top of a bunting pole at distance `t` along the span, including the sag. */
+  const cordPt = (s0, side, t, out) => {
+    const ss = s0 + t * POLE_GAP;
+    const b = basisAt(ss);
+    const c = v3(T.surfaceAt(ss, side * (T.halfWAt(ss) + SHOULDER * 0.85)));
+    return out.copy(c).addScaledVector(b.nrm, POLE_H - SAG * Math.sin(Math.PI * t));
+  };
+
+  for (let s0 = 20; s0 < T.LENGTH - POLE_GAP - 20; s0 += POLE_GAP) {
+    if (T.tunnelAt(s0)) continue;
     for (const side of [-1, 1]) {
-      if (n >= 700) break;
-      const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER * 0.85)));
-      const sway = 0.25 + 0.25 * Math.sin(s0 * 0.9);
-      mtx.compose(c.addScaledVector(nrm, 2.3 + sway * 0.4), q,
-                  new THREE.Vector3(1, 1, 1));
-      flags.setMatrixAt(n++, mtx);
+      const b = basisAt(s0);
+      q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+        new THREE.Vector3().crossVectors(b.nrm, b.tan).normalize(),
+        b.nrm, b.tan.clone().normalize()));
+      if (np < 420) {
+        const foot = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER * 0.85)));
+        mtx.compose(foot.addScaledVector(b.nrm, POLE_H / 2), q,
+                    new THREE.Vector3(1, 1, 1));
+        poles.setMatrixAt(np++, mtx);
+      }
+      for (let k = 0; k < PER_SPAN; k++) {
+        cordPt(s0, side, k / PER_SPAN, _a);
+        cordPt(s0, side, (k + 1) / PER_SPAN, _b);
+        _d.subVectors(_b, _a);
+        const len = _d.length();
+        if (nc < 1400) {
+          const cq = new THREE.Quaternion().setFromUnitVectors(XAX, _d.clone().normalize());
+          mtx.compose(_a.clone().addScaledVector(_d, 0.5), cq,
+                      new THREE.Vector3(len, 1, 1));
+          cords.setMatrixAt(nc++, mtx);
+        }
+        /* One flag per cord segment, hung at its midpoint and facing ACROSS the
+           road — oriented along it they are edge-on to the camera and 700 of
+           them render as a faint dotted line. */
+        const bb = basisAt(s0 + (k + 0.5) / PER_SPAN * POLE_GAP);
+        q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+          bb.tan.clone().normalize(), bb.nrm, bb.right));
+        const idx = (k + (side > 0 ? 1 : 0)) % 2;
+        if (nf[idx] < 760) {
+          mtx.compose(_a.clone().addScaledVector(_d, 0.5), q,
+                      new THREE.Vector3(1, 1, 1));
+          flagSet[idx].setMatrixAt(nf[idx]++, mtx);
+        }
+      }
     }
   }
-  flags.count = n;
-  courseRoot.add(flags);
+  poles.count = np; cords.count = nc;
+  flagSet.forEach((m, i) => { m.count = nf[i]; if (nf[i]) courseRoot.add(m); });
+  courseRoot.add(poles, cords);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1334,9 +1452,9 @@ function buildHorizon() {
      bottom of it — from down at the quay a ridge 1150 m out subtends 24 degrees
      and a lightly-hazed one reads as a dark wall across the sky rather than as
      distance. Atmospheric perspective is not a subtle effect at this scale. */
-       [[640,  T.TOP_Y + 20,  150, 150, 0.55],
-        [880,  T.TOP_Y + 90,  210, 110, 0.72],
-        [1150, T.TOP_Y + 170, 270, 80,  0.86]]) {
+       [[640,  T.TOP_Y - 170, 150, 150, 0.55],
+        [880,  T.TOP_Y - 120, 210, 110, 0.72],
+        [1150, T.TOP_Y - 70,  270, 80,  0.86]]) {
     const pos = [], col = [], idx = [];
     const c = base.clone().lerp(haze, mix);
     const lo = base.clone().lerp(haze, Math.min(1, mix + 0.18));
@@ -1435,10 +1553,25 @@ function buildSky() {
    gravel is moving past quickly. */
 function buildDust() {
   const N = 90;
+  /* A soft blob, not a plane. A flat quad has a visible edge no matter how
+     transparent it is, and at this size that edge is a rectangle sitting on the
+     road. The radial falloff is the whole difference between "dust" and
+     "polygon". */
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 64;
+  const g2 = cv.getContext('2d');
+  const grd = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grd.addColorStop(0.0, 'rgba(255,255,255,0.95)');
+  grd.addColorStop(0.45, 'rgba(255,255,255,0.35)');
+  grd.addColorStop(1.0, 'rgba(255,255,255,0)');
+  g2.fillStyle = grd; g2.fillRect(0, 0, 64, 64);
+  const puff = new THREE.CanvasTexture(cv);
+  puff.colorSpace = THREE.SRGBColorSpace;
+
   dust = new THREE.InstancedMesh(
     new THREE.PlaneGeometry(1, 1),
     new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 0.30,
+      map: puff, color: 0xffffff, transparent: true, opacity: 0.30,
       depthWrite: false, side: THREE.DoubleSide,
     }), N);
   dust.frustumCulled = false;
@@ -1469,7 +1602,11 @@ function updateDust(S, dt, at, right) {
       d.vel.multiplyScalar(1 - dt * 1.8);
     }
   }
-  camera.getWorldQuaternion(_q);
+  /* Billboard to the camera you are actually looking through. This used to
+     always use the ortho camera, so in chase and cockpit view every particle
+     was a hard-edged quad turned part-way edge-on — the "floating grey
+     rectangles" over the road. */
+  (view === 'iso' ? camera : persp).getWorldQuaternion(_q);
   dustP.forEach((d, i) => {
     const k = Math.max(0, d.life);
     const sc = d.sz * (0.35 + k * 1.7);
@@ -1491,10 +1628,16 @@ function makeCart(col) {
   cart.add(G);
   cart.userData.body = G;
 
-  /* Silhouette first. Three clearly different masses — a long low shell, a
-     rider sat high in it, and small wheels — because equal-sized lumps read as
-     a pile whatever detail you bolt on. The helmet is the brightest thing on
-     the cart on purpose: at this camera distance it is the dot your eye tracks. */
+  const paint = new THREE.MeshPhongMaterial({
+    color: col.body, shininess: 34, specular: 0x353535, flatShading: true });
+  const trim = new THREE.MeshPhongMaterial({
+    color: col.nose, shininess: 30, specular: 0x303030, flatShading: true });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x191b1e });
+  const steel = new THREE.MeshPhongMaterial({
+    color: 0x53595f, shininess: 62, specular: 0x4a4a4a });
+
+  /* Silhouette first: a long low shell, a rider sat high in it, small wheels.
+     Equal-sized lumps read as a pile whatever detail you bolt on. */
   const shell = new THREE.BoxGeometry(1.5, 0.46, 3.0);
   const pos = shell.attributes.position;
   for (let i = 0; i < pos.count; i++) {
@@ -1505,46 +1648,104 @@ function makeCart(col) {
     }
   }
   shell.computeVertexNormals();
-  const paint = new THREE.MeshPhongMaterial({
-    color: col.body, shininess: 26, specular: 0x2a2a2a, flatShading: true,
-  });
   const body = new THREE.Mesh(shell, paint);
   body.position.y = 0.44; body.castShadow = true;
   G.add(body);
 
-  const dark = new THREE.MeshLambertMaterial({ color: 0x191b1e });
   const pan = new THREE.Mesh(new THREE.BoxGeometry(1.58, 0.16, 2.7), dark);
   pan.position.y = 0.24; pan.castShadow = true;
   G.add(pan);
 
-  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.9, 4), paint);
+  /* Sidepods. THE kart-defining feature — without them a kart is a wedge, and
+     no amount of wings and pipes fixes that. Angled in at the front so they
+     read as bodywork rather than as two crates strapped to the floor. */
+  for (const sx of [-1, 1]) {
+    const podG = new THREE.BoxGeometry(0.46, 0.42, 1.5);
+    const pp = podG.attributes.position;
+    for (let i = 0; i < pp.count; i++) {
+      if (pp.getZ(i) > 0) {
+        pp.setX(i, pp.getX(i) - sx * 0.13);
+        pp.setY(i, pp.getY(i) * 0.72);
+      }
+    }
+    podG.computeVertexNormals();
+    const pod = new THREE.Mesh(podG, paint);
+    pod.position.set(sx * 0.86, 0.44, 0.10);
+    pod.castShadow = true;
+    G.add(pod);
+    /* A trim stripe along the pod. One horizontal line at cart-height is what
+       makes the yaw readable when the thing is sideways at forty metres. */
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.10, 1.36), trim);
+    stripe.position.set(sx * 1.10, 0.50, 0.10);
+    G.add(stripe);
+  }
+
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.9, 4), trim);
   nose.rotation.set(Math.PI / 2, Math.PI / 4, 0);
   nose.position.set(0, 0.40, 1.85); nose.castShadow = true;
   G.add(nose);
 
+  /* Tube bumpers front and rear. Six segments each, and they are the reason a
+     kart silhouette reads as a KART: an open frame around a low body. */
+  const tube = (len, r) => new THREE.CylinderGeometry(r, r, len, 6);
+  for (const [z, w, r] of [[2.26, 1.34, 0.055], [-1.62, 1.56, 0.065]]) {
+    const bar = new THREE.Mesh(tube(w, r), steel);
+    bar.rotation.z = Math.PI / 2;
+    bar.position.set(0, 0.30, z);
+    bar.castShadow = true;
+    G.add(bar);
+    for (const sx of [-1, 1]) {
+      const stay = new THREE.Mesh(tube(0.5, r * 0.85), steel);
+      stay.rotation.x = Math.PI / 2;
+      stay.position.set(sx * w * 0.5, 0.30, z - Math.sign(z) * 0.25);
+      G.add(stay);
+    }
+  }
+
   /* A tail fin. Pure silhouette — it costs six triangles and it is what tells
      you which way a cart is pointing when it is forty metres away. */
-  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.46, 0.62),
-    new THREE.MeshLambertMaterial({ color: col.nose }));
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.46, 0.62), trim);
   fin.position.set(0, 0.80, -1.28); fin.castShadow = true;
   G.add(fin);
 
+  /* Rear wing on stays. Reads at distance and gives the back of the cart a
+     hard horizontal edge to sit under. */
+  const rw = new THREE.Mesh(new THREE.BoxGeometry(1.24, 0.07, 0.40), trim);
+  rw.position.set(0, 1.32, -1.46); rw.castShadow = true;
+  G.add(rw);
+  for (const sx of [-0.48, 0.48]) {
+    const stay = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.46, 0.18), dark);
+    stay.position.set(sx, 1.11, -1.46);
+    G.add(stay);
+  }
+
   /* Big at the back, small at the front: a hot-rod stance reads instantly and
-     gives the shape somewhere to sit. */
+     gives the shape somewhere to sit. Rims are a contrasting disc plus spokes,
+     not a box — a box hub is the single most prototype-looking thing on a
+     vehicle, because wheels are the part the eye checks for craft. */
   const wheels = [];
   const tyre = new THREE.MeshLambertMaterial({ color: 0x141416 });
-  const hub = new THREE.MeshLambertMaterial({ color: 0x8d8f93 });
+  const rimM = new THREE.MeshPhongMaterial({
+    color: 0xc9ccd1, shininess: 80, specular: 0x777777, flatShading: true });
   for (const [x, z, r, steers] of [[-0.84, 1.12, 0.30, 1], [0.84, 1.12, 0.30, 1],
                                    [-0.88, -1.12, 0.42, 0], [0.88, -1.12, 0.42, 0]]) {
     const pivot = new THREE.Group();            // steering
     pivot.position.set(x, r, z);
     const spin = new THREE.Group();             // rolling
-    const g = new THREE.CylinderGeometry(r, r, 0.26, 12);
+    const g = new THREE.CylinderGeometry(r, r, 0.26, 14);
     g.rotateZ(Math.PI / 2);
     const w = new THREE.Mesh(g, tyre);
     w.castShadow = true;
-    const cap = new THREE.Mesh(new THREE.BoxGeometry(0.30, r * 0.9, r * 0.9), hub);
-    spin.add(w, cap);
+    spin.add(w);
+    /* Rim disc slightly proud of the tyre on the outboard face only. */
+    const disc = new THREE.CylinderGeometry(r * 0.62, r * 0.62, 0.30, 12);
+    disc.rotateZ(Math.PI / 2);
+    spin.add(new THREE.Mesh(disc, rimM));
+    for (let k = 0; k < 4; k++) {
+      const sp = new THREE.Mesh(new THREE.BoxGeometry(0.32, r * 1.24, 0.07), rimM);
+      sp.rotation.x = (k / 4) * Math.PI;
+      spin.add(sp);
+    }
     pivot.add(spin);
     G.add(pivot);
     wheels.push({ pivot, spin, r, steers });
@@ -1552,10 +1753,8 @@ function makeCart(col) {
   cart.userData.wheels = wheels;
 
   /* Front wing, exhausts and a roundel. Small pieces, but they are what stops
-     a kart reading as a wedge with wheels — and the wing in particular gives
-     the nose a horizontal line to read the yaw against when it is sideways. */
-  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.11, 0.46),
-    new THREE.MeshPhongMaterial({ color: col.nose, shininess: 22, flatShading: true }));
+     a kart reading as a wedge with wheels. */
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.11, 0.46), trim);
   wing.position.set(0, 0.30, 2.05); wing.castShadow = true;
   G.add(wing);
   for (const sx of [-0.62, 0.62]) {
@@ -1563,12 +1762,18 @@ function makeCart(col) {
     stay.position.set(sx, 0.40, 2.0);
     G.add(stay);
   }
-  const pipe = new THREE.CylinderGeometry(0.09, 0.11, 1.1, 6);
+  /* Exhausts: thinner, darker and angled up. At the old diameter in bare steel
+     they were the brightest thing on the cart from the chase camera, which put
+     the eye on the pipes instead of on the kart. */
+  const pipe = new THREE.CylinderGeometry(0.05, 0.065, 0.62, 6);
   pipe.rotateX(Math.PI / 2);
-  for (const sx of [-0.42, 0.42]) {
-    const ex = new THREE.Mesh(pipe, new THREE.MeshPhongMaterial({
-      color: 0x9aa0a6, shininess: 60, specular: 0x555555 }));
-    ex.position.set(sx, 0.52, -1.65); ex.castShadow = true;
+  const pipeM = new THREE.MeshPhongMaterial({
+    color: 0x4a4f55, shininess: 55, specular: 0x383838 });
+  for (const sx of [-0.40, 0.40]) {
+    const ex = new THREE.Mesh(pipe, pipeM);
+    ex.position.set(sx, 0.62, -1.46);
+    ex.rotation.x = -0.26;
+    ex.castShadow = true;
     G.add(ex);
   }
   const roundel = new THREE.Mesh(new THREE.CircleGeometry(0.30, 14),
@@ -1578,37 +1783,60 @@ function makeCart(col) {
   G.add(roundel);
 
   const rider = new THREE.Group();
+  const suit = new THREE.MeshLambertMaterial({ color: col.rider });
   const torso = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.30, 0.52, 3, 8),
-    new THREE.MeshLambertMaterial({ color: col.rider }));
+    new THREE.CapsuleGeometry(0.30, 0.52, 3, 8), suit);
   torso.name = 'torso'; torso.position.y = 0.46; torso.castShadow = true;
-  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.20, 0.34),
-    new THREE.MeshLambertMaterial({ color: col.rider }));
+  const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.74, 0.20, 0.34), suit);
   shoulders.position.y = 0.76; shoulders.castShadow = true;
-  const helmet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.26, 12, 10),
-    new THREE.MeshPhongMaterial({ color: col.skin, shininess: 40, specular: 0x333333 }));
-  helmet.name = 'head'; helmet.position.y = 1.06; helmet.castShadow = true;
-  const visor = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.11, 0.22),
-    new THREE.MeshLambertMaterial({ color: 0x14181f }));
-  visor.position.set(0, 1.07, 0.20);
-  /* Arms forward to the wheel. Two boxes, and the rider stops looking like a
-     capsule someone left on the seat. */
-  const armM = new THREE.MeshLambertMaterial({ color: col.rider });
+
+  /* Seat back behind the rider. Closes the gap between the shoulders and the
+     tail fin, which otherwise reads as a torso floating in a hole. */
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.40, 0.12),
+    new THREE.MeshLambertMaterial({ color: 0x3a3f46 }));
+  seat.position.set(0, 0.46, -0.36); seat.castShadow = true;
+  rider.add(seat);
+
+  /* A HELMET, not a head. This was a bare beige sphere — at chase distance it
+     read as a bald man sat in a crate, and it was the loudest prototype tell
+     on the whole cart. Team-coloured shell, dark visor band wrapping the
+     front, chin bar under it, and a crest along the crown. */
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.27, 14, 12),
+    new THREE.MeshPhongMaterial({
+      color: col.body, shininess: 78, specular: 0x707070 }));
+  helmet.name = 'head'; helmet.position.y = 1.07; helmet.castShadow = true;
+  const visorM = new THREE.MeshPhongMaterial({
+    color: 0x11151c, shininess: 100, specular: 0x8899aa });
+  const visor = new THREE.Mesh(
+    new THREE.SphereGeometry(0.275, 14, 12, Math.PI * 0.18, Math.PI * 0.64,
+                             Math.PI * 0.30, Math.PI * 0.30), visorM);
+  visor.rotation.y = -Math.PI / 2;
+  visor.position.y = 1.07;
+  const chin = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.11, 0.20),
+    new THREE.MeshPhongMaterial({ color: col.body, shininess: 78 }));
+  chin.position.set(0, 0.93, 0.17);
+  const crest = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.10, 0.44), trim);
+  crest.position.set(0, 1.28, -0.02);
+
+  /* Arms forward to the wheel, with gloves that actually meet it. */
+  const gloveM = new THREE.MeshLambertMaterial({ color: col.nose });
   for (const sx of [-0.30, 0.30]) {
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.66), armM);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.66), suit);
     arm.position.set(sx, 0.62, 0.34);
     arm.rotation.x = -0.30;
     arm.castShadow = true;
     rider.add(arm);
+    const glove = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.13), gloveM);
+    glove.position.set(sx * 0.78, 0.53, 0.60);
+    rider.add(glove);
   }
-  const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.045, 6, 12),
+  const wheelM = new THREE.Mesh(new THREE.TorusGeometry(0.24, 0.045, 6, 12),
     new THREE.MeshLambertMaterial({ color: 0x1c1e22 }));
-  wheel.position.set(0, 0.50, 0.62);
-  wheel.rotation.x = 1.15;
-  rider.add(wheel);
+  wheelM.position.set(0, 0.50, 0.62);
+  wheelM.rotation.x = 1.15;
+  rider.add(wheelM);
 
-  rider.add(torso, shoulders, helmet, visor);
+  rider.add(torso, shoulders, helmet, visor, chin, crest);
   rider.position.set(0, 0.50, -0.30);
   G.add(rider);
 

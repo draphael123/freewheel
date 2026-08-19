@@ -61,8 +61,15 @@ export const tune = {
 
   baleLoss: 0.24,         // fraction of speed lost hitting a bale
   baleShove: 2.6,         // m/s of lateral shove away from it
-  wallBite: 0.85,         // speed lost per m/s of lateral speed INTO the barrier
-  wallScrub: 8.0,         // m/s^2 lost while scraping along it
+  /* Barriers bump you back onto the road, they do not hold you. Daniel's
+     report was "I keep getting stuck on a wall", and the cause was not any one
+     of these numbers — it was that nothing ever separated you from the wall
+     while the corner kept pressing you into it. See the barrier block below.
+     These are now the cost of a scrape, not a trap. */
+  wallBite: 0.42,         // speed lost per m/s of lateral speed INTO the barrier
+  wallScrub: 2.4,         // m/s^2 lost while scraping along it
+  wallKick: 2.4,          // m/s of separation even from the gentlest brush
+  wallBounce: 0.45,       // ...or this fraction of the speed you arrived with
 
   landAbsorb: 0.55,       // speed lost per m/s of impact perpendicular to road
   landCharge: 0.85,       // seconds banked for a perfect landing
@@ -174,7 +181,13 @@ export function step(S, dt) {
      BEFORE any steering. Ask for more than mu*g and they let go — that is the
      grip limit, and it is the only reason a braking point is a decision. */
   if (!S.air) {
-    const push = S.v * S.v * kh - K.G * Math.sin(T.bankAt(S.s));
+    let push = S.v * S.v * kh - K.G * Math.sin(T.bankAt(S.s));
+    /* A barrier carries load. While you are against it, the wall takes the
+       cornering force instead of your tyres — so steering away is unopposed
+       and you peel off at once. Without this the centrifugal term pinned you
+       to the wall for the whole length of the corner no matter what you did
+       with the stick, which is exactly what "stuck on a wall" felt like. */
+    if (S.onWall && S.u !== 0 && Math.sign(push) === Math.sign(S.u)) push = 0;
     const limit = K.mu * K.G * grip
                 * (In.hand ? K.handbrakeGrip : 1)
                 * (S.spun > 0 ? 0.25 : 1);
@@ -222,9 +235,13 @@ export function step(S, dt) {
   S.onWall = Math.abs(S.u) > wall;
   if (S.onWall) {
     const into = Math.abs(S.vy);
-    S.u = Math.sign(S.u) * wall;
+    const sgn = Math.sign(S.u);
+    S.u = sgn * wall;
     if (!wasOn) { S.v = Math.max(0, S.v - K.wallBite * Math.min(into, 12)); S.wallHits++; }
-    S.vy *= -0.15;                                // it does not bounce you back
+    /* Bounce OFF. A brush gives you wallKick, a real hit gives you a share of
+       what you arrived with — either way you leave the barrier this frame
+       instead of scrubbing along it. */
+    S.vy = -sgn * Math.max(K.wallKick, into * K.wallBounce);
     if (!S.air) S.v = Math.max(0, S.v - K.wallScrub * dt);
   }
 
