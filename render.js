@@ -36,6 +36,7 @@ export function setRes(scale) {
 let renderer, scene, camera, cart, rider, blob, reticle, tether, sun, hemi, fog;
 let sky, dust, dustP = [], shakeT = 0;
 let courseRoot, TH = THEME.get('alpine');
+let rivalCarts = [];
 const hex = (c) => new THREE.Color(c[0], c[1], c[2]);
 let roadMesh, roadPlain, roadTint, pylons, postGroup, treeGroup;
 let camYaw = 0, camYawTarget = 0, camSize = 46;
@@ -570,17 +571,20 @@ function updateDust(S, dt, at, right) {
 /* -------------------------------------------------------------------------- */
 /* the cart                                                                    */
 /* -------------------------------------------------------------------------- */
-function buildCart() {
-  cart = new THREE.Group();
+/* One cart, built to order. Rivals are the same object as yours in a different
+   colour — nothing about them is cheaper or faked, because the moment they are
+   they stop reading as cars in the race and start reading as scenery. */
+function makeCart(col) {
+  const cart = new THREE.Group();
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(1.55, 0.42, 2.9),
-    new THREE.MeshLambertMaterial({ color: 0xb8452c }));  // recoloured in build()
+    new THREE.MeshLambertMaterial({ color: col.body }));
   body.position.y = 0.46; body.castShadow = true;
   cart.add(body);
 
   const nose = new THREE.Mesh(
     new THREE.BoxGeometry(1.1, 0.30, 0.9),
-    new THREE.MeshLambertMaterial({ color: 0x8d3320 }));
+    new THREE.MeshLambertMaterial({ color: col.nose }));
   nose.position.set(0, 0.42, 1.75); nose.castShadow = true;
   cart.add(nose);
 
@@ -596,19 +600,27 @@ function buildCart() {
   /* The rider IS the pump gauge. Whether the mechanic is legible without a
      HUD comes down entirely to whether this silhouette reads as crouched or
      standing from a fixed camera 220 m away. */
-  rider = new THREE.Group();
+  const rider = new THREE.Group();
   const torso = new THREE.Mesh(
     new THREE.CapsuleGeometry(0.33, 0.62, 3, 8),
-    new THREE.MeshLambertMaterial({ color: 0x2f4f6d }));
+    new THREE.MeshLambertMaterial({ color: col.rider }));
   torso.name = 'torso'; torso.position.y = 0.52; torso.castShadow = true;
   const head = new THREE.Mesh(
     new THREE.SphereGeometry(0.25, 10, 8),
-    new THREE.MeshLambertMaterial({ color: 0xe0c9a6 }));
+    new THREE.MeshLambertMaterial({ color: col.skin }));
   head.name = 'head'; head.position.y = 1.12; head.castShadow = true;
   rider.add(torso, head);
   rider.position.set(0, 0.55, -0.35);
   cart.add(rider);
   scene.add(cart);
+  cart.userData.rider = rider;
+  return cart;
+}
+
+function buildCart() {
+  cart = makeCart(TH ? TH.cart : { body: 0xb8452c, nose: 0x8d3320,
+                                   rider: 0x2f4f6d, skin: 0xe0c9a6 });
+  rider = cart.userData.rider;
 
   /* Contact shadow. The single most important object in this file: it is the
      only thing that says how far above the road the cart is, and the only
@@ -735,6 +747,8 @@ export function build() {
   rider.getObjectByName('torso').material.color.set(TH.cart.rider);
   rider.getObjectByName('head').material.color.set(TH.cart.skin);
   dust.material.color.set(TH.dust);
+  for (const m of rivalCarts) m.userData.rider.getObjectByName('head')
+    .material.color.set(TH.cart.skin);
 
   camSize = 54;
   camYaw = camYawTarget = T.headAt(0);
@@ -754,29 +768,54 @@ function applyCamSize(size) {
 }
 
 /* -------------------------------------------------------------------------- */
-export function frame(S, dt) {
-  const { tan, right, nrm } = basisAt(S.s);
-  const surf = v3(T.surfaceAt(S.s, S.u));
-  const y = S.air ? S.yAir : surf.y;
-  const pos = new THREE.Vector3(surf.x, y, surf.z).addScaledVector(nrm, 0.02);
+/* Rivals get their own meshes on demand, keyed to the field. Called whenever a
+   race starts; safe to call repeatedly. */
+export function setField(carts) {
+  for (const m of rivalCarts) scene.remove(m);
+  rivalCarts = [];
+  for (const c of carts) {
+    if (c.isPlayer) continue;
+    const m = makeCart({ body: c.color, nose: c.color, rider: 0x22262b,
+                         skin: TH.cart.skin });
+    m.userData.cart = c;
+    rivalCarts.push(m);
+  }
+}
 
-  cart.position.copy(pos).addScaledVector(nrm, 0.34);
+/* Sit one cart on the road. Shared by you and by every rival, so a rival can
+   never be placed by different rules than you are. */
+function placeCart(group, St) {
+  const { tan, right, nrm } = basisAt(St.s);
+  const surf = v3(T.surfaceAt(St.s, St.u));
+  const y = St.air ? St.yAir : surf.y;
+  const pos = new THREE.Vector3(surf.x, y, surf.z).addScaledVector(nrm, 0.02);
+  group.position.copy(pos).addScaledVector(nrm, 0.34);
   /* setFromRotationMatrix assumes a pure rotation. {right, nrm, tan} has
      determinant -1 at EVERY heading — it is a reflection, because nrm is built
      as right x tan, so the handed order is (Z x X) not (X x Z). Feeding a
      reflection in returns a meaningless quaternion, and the cart sat broadside
-     across the road at all times. Build X from nrm x tan instead. */
+     across the road. Build X from nrm x tan instead. */
   const bx = new THREE.Vector3().crossVectors(nrm, tan).normalize();
-  const m = new THREE.Matrix4().makeBasis(bx, nrm, tan.clone().normalize());
-  cart.quaternion.setFromRotationMatrix(m);
+  group.quaternion.setFromRotationMatrix(
+    new THREE.Matrix4().makeBasis(bx, nrm, tan.clone().normalize()));
 
-  /* Crouch. The rider drops crouchTravel metres and folds; the aim is that
-     you can tell tucked from standing at gameplay distance without the HUD. */
-  const c = S.c;
-  rider.position.y = 0.30 + c * 0.45;
-  rider.getObjectByName('torso').scale.set(1 + (1 - c) * 0.30, 0.62 + c * 0.38, 1 + (1 - c) * 0.30);
-  rider.getObjectByName('head').position.y = 0.80 + c * 0.36;
-  rider.rotation.x = (1 - c) * 0.55;
+  const r = group.userData.rider, c = St.c;
+  r.position.y = 0.30 + c * 0.45;
+  r.getObjectByName('torso').scale.set(1 + (1 - c) * 0.30, 0.62 + c * 0.38, 1 + (1 - c) * 0.30);
+  r.getObjectByName('head').position.y = 0.80 + c * 0.36;
+  r.rotation.x = (1 - c) * 0.55;
+  return { tan, right, nrm, surf, pos };
+}
+
+export function frame(S, dt) {
+  const { tan, right, nrm, surf, pos } = placeCart(cart, S);
+  const y = S.air ? S.yAir : surf.y;
+
+  for (const m of rivalCarts) {
+    const c = m.userData.cart;
+    m.visible = !c.done;
+    if (m.visible) placeCart(m, c);
+  }
 
   /* ---- the contact shadow ---------------------------------------------- */
   const height = Math.max(0, y - surf.y);

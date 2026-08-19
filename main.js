@@ -10,17 +10,19 @@
    and the physics to the new course while the renderer quietly kept building
    the old one. Freshness is handled where it belongs — the dev server sends
    no-store and vercel.json sends must-revalidate on every .js. */
-const [T, SIM, R, THEME] = await Promise.all([
+const [T, SIM, R, THEME, RACE] = await Promise.all([
   import('./track.js'),
   import('./sim.js'),
   import('./render.js'),
   import('./theme.js'),
+  import('./race.js'),
 ]);
 
 const el = (id) => document.getElementById(id);
 R.init(el('c'));
 el('boot').remove();
 
+let field = null;
 let S = SIM.create();
 let mode = 'intro';          // intro | play | settings | done
 let prevMode = 'intro';
@@ -78,7 +80,10 @@ function show(next) {
 
 function startRun(courseId) {
   if (courseId && courseId !== T.ID) { T.load(courseId); R.build(); drawProfile(); }
-  S = SIM.create();
+  field = RACE.createField();
+  R.setField(field.carts);
+  S = field.you;
+  countdown = 3.2;
   lastPumpShown = 0;
   show('play');
 }
@@ -168,7 +173,7 @@ function drawProfile() {
 drawProfile();
 
 /* ---------------------------------- HUD ----------------------------------- */
-let flashT = 0, lastPumpShown = 0;
+let flashT = 0, lastPumpShown = 0, countdown = 0;
 
 function updateHUD(dt) {
   el('mph').textContent = Math.round(S.v * 2.2369);
@@ -190,6 +195,18 @@ function updateHUD(dt) {
   el('cue').textContent = want;
   el('cue').classList.toggle('on', want === 'stand up');
 
+  /* Standings. The single most important number on screen now — it is the
+     reason any of the rest of it matters. */
+  const pos = RACE.positionOf(field, S);
+  el('pos').textContent = pos;
+  el('posOf').textContent = '/ ' + field.carts.length;
+  const gap = RACE.gapAhead(field, S);
+  el('gap').textContent = gap
+    ? `+${gap.seconds.toFixed(1)}s  ${gap.name}`
+    : 'leading';
+  el('gap').classList.toggle('lead', !gap);
+  el('draft').classList.toggle('on', !!S.drafting);
+
   const i = Math.min(PROF.length - 1, Math.floor((S.s / T.LENGTH) * (PROF.length - 1)));
   el('profdone').setAttribute('points', PROF.slice(0, i + 1).map((p) => p.join(',')).join(' '));
   el('profdot').setAttribute('cx', PROF[i][0]);
@@ -208,6 +225,11 @@ function updateHUD(dt) {
 }
 
 function finish() {
+  const place = S.place || RACE.positionOf(field, S);
+  const ORD = ['', '1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+  el('dplace').textContent = ORD[place] || place + 'th';
+  el('dplace').classList.toggle('win', place === 1);
+  el('dgrid').textContent = `from ${ORD[S.grid] || S.grid} on the grid`;
   el('dtime').textContent = S.t.toFixed(2);
   el('dtop').textContent = Math.round(S.vMax * 2.2369);
   el('dpump').textContent = (S.pumpTotal * 2.2369).toFixed(1);
@@ -237,10 +259,21 @@ function tick(now) {
   if (dt > 0.25) dt = 0.25;         // a backgrounded tab must not teleport
 
   if (mode === 'play') {
-    acc += dt;
-    readInput();
-    let guard = 0;
-    while (acc >= HZ && guard++ < 60) { SIM.step(S, HZ); acc -= HZ; }
+    if (countdown > 0) {
+      /* Held on the grid. Physics is frozen rather than merely input-locked, so
+         nobody rolls away down a 10% slope while the lights are still on. */
+      countdown -= dt;
+      el('count').textContent = countdown > 0.35
+        ? String(Math.ceil(countdown - 0.2)) : 'GO';
+      el('count').classList.toggle('go', countdown <= 0.35);
+      acc = 0;
+    } else {
+      el('count').textContent = '';
+      acc += dt;
+      readInput();
+      let guard = 0;
+      while (acc >= HZ && guard++ < 60) { RACE.step(field, HZ, S.input); acc -= HZ; }
+    }
     updateHUD(dt);
     if (S.done) finish();
   } else {
@@ -263,7 +296,12 @@ show('intro');
 /* --------------------------------- console -------------------------------- */
 window.FW = {
   get S() { return S; }, set S(x) { S = x; },
-  tune: SIM.tune, opts: R.opts, T, SIM, R, THEME,
+  tune: SIM.tune, opts: R.opts, T, SIM, R, THEME, RACE,
+  get field() { return field; },
+  race: (o) => { const r = RACE.sim(o); console.table(r.finishers);
+                 if (r.stuck.length) console.warn('STUCK', r.stuck);
+                 console.log('spread', r.spread + 's', 'lead changes', r.leadChanges);
+                 return r; },
   simAll: (o) => { const r = SIM.simAll(o); console.table(r); return r; },
   course: (id) => { startRun(id); return T.TITLE; },
   sim: (o) => { const r = SIM.sim(o); console.table(r); return r; },

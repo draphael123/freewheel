@@ -99,6 +99,7 @@ export function create() {
     pumpTotal: 0, brakeTotal: 0, airTotal: 0,
     vMax: 0, lastLanding: 0, thrustTotal: 0,
     onWall: false, wallHits: 0, lastWallBite: 0,
+    mod: { drag: 1 }, drafting: false, scraping: false,
     input: { tuck: false, steer: 0, brake: false, thrust: false },
   };
 }
@@ -209,7 +210,12 @@ export function step(S, dt) {
         S.thrustTotal += K.thrust * use;
       }
 
-      const drag = K.dragTuck + (K.dragOpen - K.dragTuck) * S.c;
+      /* mod.drag is how a tow arrives: the race layer sets it below 1 while
+         you sit in someone's wake. Kept as a per-cart multiplier rather than a
+         special case in here, so sim.step stays one cart's physics and nothing
+         else. */
+      const drag = (K.dragTuck + (K.dragOpen - K.dragTuck) * S.c)
+                 * (S.mod?.drag ?? 1);
       a -= drag * S.v * S.v;
       a -= K.roll;
 

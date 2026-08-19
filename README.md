@@ -30,6 +30,24 @@ fast, so the throttle is real but its fuel is still the hill.
 | `R` | restart |
 | `ESC` | settings |
 
+## The race
+
+Four rivals, and you start **last on a five-car grid**. That costs nothing to
+build and it is the cheapest way to give a run a shape — there is something to
+do from the first second and a reason to care about the corners.
+
+Every cart runs the identical physics from `sim.js`. The AI differs only in what
+it presses, never in what it is allowed to do. Skill is not a speed multiplier:
+it drives how well a rival times the pump, how late they brake and how tidy
+their line is, so a slow rival is slow for a reason you can watch.
+
+- **Contact** — rear-ending costs the car behind, grinding alongside costs you
+  both, so side-by-side is never strictly better than picking a line.
+- **The tow** — sit 2.5–15 m behind someone and your drag halves while the
+  flywheel winds. Rivals are a resource, not only an obstacle.
+
+Measured over a full field: **11.4 s spread, 6 lead changes**, everyone finishes.
+
 ## The hills
 
 Three venues, and each one **owns a mechanic** rather than a palette. If two
@@ -86,6 +104,11 @@ Physics numbers came out of `FW.sim()`, not out of taste:
   half of a cycle let a rider who simply mashed the key farm charge off the good
   halves while the bad halves cost speed but no charge — measured, mashing beat
   playing properly.
+- **A flat penalty can hold a car at a standstill.** Grinding alongside cost a
+  fixed 3.2 m/s², which exactly cancelled gravity on a shallow grade — two carts
+  that touched on the grid held each other at zero for the entire race, and the
+  field report quietly averaged over the three that got away. Scale contact
+  losses by speed, and make the harness name its non-finishers.
 - **A different URL is a different module.** `main.js` imported
   `./track.js?v=4` for cache-busting while `render.js` imported `./track.js`
   plainly, which created two track modules with separate state: switching venue
@@ -114,6 +137,7 @@ Every readability cue is individually switchable in **Settings**, so the claim
 ## Console
 
 ```js
+FW.race()       // run a whole field headlessly: places, spread, lead changes
 FW.simAll()     // every venue x every policy — the variety claim, measured
 FW.sim()        // policies on the current course
 FW.course('spillway')
@@ -140,6 +164,7 @@ a stale module reads exactly like a code bug.
 | `theme.js` | every colour, light and scatter rule, as data |
 | `sim.js` | cart physics and the headless policies |
 | `render.js` | the look, and the readability experiment |
+| `race.js` | the field: rivals, contact, the tow, standings |
 | `main.js` | screens, input, fixed-timestep loop |
 
 three.js r160 is vendored in `vendor/` on purpose — a CDN miss leaves a menu
