@@ -59,6 +59,41 @@ export const COURSES = {
       { name: 'HAIRPIN R',    len: 110, turn:  155, grade: -0.15, w: 8.5, zone: 'village', bank: 11 },
       { name: 'THE QUAY',     len: 200, turn:  -45, grade: -0.07, w: 9.0, zone: 'shore' },
     ],
+    /* Forks. A fork is a stretch of the SPINE where the road exists at two
+       different lateral offsets. You drive one; the other is built as geometry
+       you can see and not take.
+
+       They are lateral deviations rather than separate centrelines for one
+       reason: two independently-integrated branches end at different points in
+       space and will not rejoin, and hand-authoring a displacement match is
+       miserable. A raised-cosine offset returns to zero with zero slope at both
+       ends, so the branches rejoin by construction. The load() pass bakes the
+       chosen offset into the centreline and then RESAMPLES to true arc length,
+       so a branch that swings wide really is longer to drive — without that the
+       whole shorter-vs-longer trade would be a lie. */
+    forks: [
+      { id: 'cornice', from: 430, to: 570, prompt: 'the drop, or around it',
+        branches: [
+          { id: 'drop', name: 'THE DROP', side: -1, bulge: 4, w: 5.2,
+            grip: 0.72, bank: 2, note: 'straight down the fall line' },
+          { id: 'traverse', name: 'THE TRAVERSE', side: 1, bulge: 24, w: 10.5,
+            grip: 1.10, bank: 15, note: 'long way round, but it holds' },
+        ] },
+      { id: 'terrace', from: 1450, to: 1640, prompt: 'over the terraces, or the flume',
+        branches: [
+          { id: 'terraces', name: 'THE TERRACES', side: 1, bulge: 6, w: 6.2,
+            grip: 0.80, bank: 3, note: 'stepped, and it drops under you' },
+          { id: 'flume', name: 'THE FLUME', side: -1, bulge: 19, w: 9.0,
+            grip: 1.10, bank: 17, note: 'the old water channel — banked all the way' },
+        ] },
+      { id: 'wynd', from: 2230, to: 2360, prompt: 'the steps, or the wynd',
+        branches: [
+          { id: 'steps', name: 'THE STEPS', side: -1, bulge: 5, w: 5.6,
+            grip: 0.76, bank: 3, note: 'straight down through the town' },
+          { id: 'wynd', name: 'THE WYND', side: 1, bulge: 17, w: 9.2,
+            grip: 1.08, bank: 12, note: 'round behind the houses' },
+        ] },
+    ],
     hazards: [
       { s: 480, u: -3.0 }, { s: 494, u: 0.6 },
       { s: 560, u:  2.0 },
@@ -199,8 +234,24 @@ const ramp = (from, to, a) => (a >= BLEND ? to : from + (to - from) * smoothstep
    -------------------------------------------------------------------------- */
 export let ID, TITLE, BLURB, OWNS, THEME, HALF_W, SLAB;
 export let PTS, LENGTH, NAMES, TOP_Y, BOT_Y, HAZARDS;
+/* The fork table for the loaded course, and the route actually driven. */
+export let FORKS = [], ROUTE = {};
 
-export function load(id) {
+export const forksOf = (id) => (COURSES[id] || {}).forks || [];
+export const defaultRoute = (id) => {
+  const r = {};
+  for (const f of forksOf(id)) r[f.id] = f.branches[0].id;
+  return r;
+};
+export const branchOf = (fork, bid) =>
+  fork.branches.find((b) => b.id === bid) || fork.branches[0];
+
+/* Raised cosine: 0 at a=0, 1 at a=0.5, 0 at a=1, with ZERO SLOPE at both ends.
+   The zero slope is the point — a plain sine leaves a curvature step where the
+   branch meets the spine, and the cart feels that as a kerb it cannot see. */
+const bump = (a) => (a <= 0 || a >= 1) ? 0 : 0.5 * (1 - Math.cos(2 * Math.PI * a));
+
+export function load(id, route) {
   const C = COURSES[id] || COURSES[COURSE_IDS[0]];
   ID = COURSES[id] ? id : COURSE_IDS[0];
   TITLE = C.title; BLURB = C.blurb; OWNS = C.owns; THEME = C.theme;
@@ -254,6 +305,89 @@ export function load(id) {
     zone: C.segments[C.segments.length - 1].zone || 'forest', tunnel: false, bridge: false,
     skyroad: false, hall: false,
   });
+
+  /* ---- forks ------------------------------------------------------------
+     Displace the spine laterally for the chosen branch, override its character
+     over the same range, then resample. Frames are computed AFTER this, from
+     finite differences on the points we actually kept, so the curvature of a
+     bulging branch is real and the physics can never disagree with the mesh. */
+  FORKS = C.forks || [];
+  ROUTE = {};
+  /* Right-of-travel for every point of the UNDISPLACED spine, computed up front.
+     Deriving it from neighbours while displacing reads points that have already
+     moved, so the offset compounds into itself — the first version of this made
+     a 2670 m course measure 23 km. */
+  const rgt = new Float64Array(pts.length * 2);
+  for (let i = 0; i < pts.length; i++) {
+    const q0 = pts[Math.max(0, i - 1)], q1 = pts[Math.min(pts.length - 1, i + 1)];
+    const hx = q1.x - q0.x, hz = q1.z - q0.z;
+    const hl = Math.hypot(hx, hz) || 1e-6;
+    rgt[i * 2] = -hz / hl; rgt[i * 2 + 1] = hx / hl;
+  }
+  for (const f of FORKS) {
+    /* A route entry is either a branch id, or {id, grip, width} carrying the
+       season's wear factors. track.js deliberately does not know what wear IS
+       — season.js owns that curve — it only knows how to apply a multiplier. */
+    const want = route && route[f.id];
+    const wantId = typeof want === 'string' ? want : (want && want.id);
+    const wGrip = (want && want.grip != null) ? want.grip : 1;
+    const wWide = (want && want.width != null) ? want.width : 1;
+    const b = branchOf(f, wantId);
+    ROUTE[f.id] = b.id;
+
+    const span = f.to - f.from;
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      if (p.s < f.from || p.s > f.to) continue;
+      const k = bump((p.s - f.from) / span);
+      const rx = rgt[i * 2], rz = rgt[i * 2 + 1];
+      const off = b.side * b.bulge * k;
+      p.x += rx * off; p.z += rz * off;
+      /* Character. Blended in on the same bump so a branch does not snap to a
+         different grip halfway through the join. */
+      const bw = (b.w != null ? b.w : p.halfW) * wWide;
+      const bg = (b.grip != null ? b.grip : p.grip) * wGrip;
+      p.halfW = p.halfW + (bw - p.halfW) * k;
+      p.grip = p.grip + (bg - p.grip) * k;
+      if (b.bank != null) p.bankMag = p.bankMag + (b.bank * Math.PI / 180 - p.bankMag) * k;
+      if (k > 0.02) p.label = b.name;
+    }
+  }
+
+  /* ---- resample to true arc length --------------------------------------
+     Displacing the centreline changes how far there is to drive, and the whole
+     point of a fork is that the wide line COSTS you something. Leaving s as the
+     spine parameter would have made the long way round free. */
+  if (FORKS.length) {
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) {
+      cum[i] = cum[i - 1] + Math.hypot(
+        pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y, pts[i].z - pts[i - 1].z);
+    }
+    const total = cum[cum.length - 1];
+    const out = [];
+    let j = 0;
+    for (let t = 0; t <= total; t += STEP) {
+      while (j < cum.length - 2 && cum[j + 1] < t) j++;
+      const seg = (cum[j + 1] - cum[j]) || 1e-6;
+      const u = Math.min(1, Math.max(0, (t - cum[j]) / seg));
+      const A = pts[j], B = pts[Math.min(pts.length - 1, j + 1)];
+      const mix = (k) => A[k] + (B[k] - A[k]) * u;
+      out.push({
+        x: mix('x'), y: mix('y'), z: mix('z'), s: t,
+        seg: u < 0.5 ? A.seg : B.seg,
+        grip: mix('grip'), bankMag: mix('bankMag'), halfW: mix('halfW'),
+        zone: u < 0.5 ? A.zone : B.zone,
+        tunnel: u < 0.5 ? A.tunnel : B.tunnel,
+        bridge: u < 0.5 ? A.bridge : B.bridge,
+        skyroad: u < 0.5 ? A.skyroad : B.skyroad,
+        hall: u < 0.5 ? A.hall : B.hall,
+        label: u < 0.5 ? A.label : B.label,
+      });
+    }
+    pts.length = 0;
+    Array.prototype.push.apply(pts, out);
+  }
 
   /* Frames. Pitch is signed: negative descends. Vertical curvature is the rate
      of change of pitch along the road — positive means the road is bending
@@ -331,6 +465,15 @@ export function hazardsNear(s, span = 4) {
   return out;
 }
 export const segAt   = (s) => PTS[Math.round(idxAt(s))].seg;
+/* The name of where you are. Not NAMES[segAt(s)] any more: a fork branch is a
+   place with its own name that does not correspond to a spine segment. */
+export const placeAt = (s) => {
+  const p = PTS[Math.round(idxAt(s))];
+  return p.label || NAMES[p.seg];
+};
+/* Which fork, if any, you are approaching — for the route prompt. */
+export const forkAhead = (s, look = 120) =>
+  FORKS.find((f) => s < f.from && s > f.from - look) || null;
 
 /* World position of the road surface at distance s, offset u metres to the
    rider's right. Banking raises the outside of the corner, so the surface the

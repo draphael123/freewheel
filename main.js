@@ -10,13 +10,14 @@
    and the physics to the new course while the renderer quietly kept building
    the old one. Freshness is handled where it belongs — the dev server sends
    no-store and vercel.json sends must-revalidate on every .js. */
-const [T, SIM, R, THEME, RACE, AUDIO] = await Promise.all([
+const [T, SIM, R, THEME, RACE, AUDIO, SEASON] = await Promise.all([
   import('./track.js'),
   import('./sim.js'),
   import('./render.js'),
   import('./theme.js'),
   import('./race.js'),
   import('./audio.js'),
+  import('./season.js'),
 ]);
 
 const el = (id) => document.getElementById(id);
@@ -169,16 +170,125 @@ syncSettingsUI();
 function show(next) {
   if (next === 'settings' && mode !== 'settings') prevMode = mode;
   mode = next;
-  for (const id of ['intro', 'venues', 'settings', 'done']) {
+  for (const id of ['intro', 'venues', 'route', 'settings', 'done']) {
     el(id).classList.toggle('on', id === next);
   }
   el('hudWrap').classList.toggle('on', next === 'play');
   if (next === 'settings') syncSettingsUI();
   if (next === 'venues') drawVenues();
+  if (next === 'route') drawRoute();
 }
 
-function startRun(courseId) {
-  if (courseId && courseId !== T.ID) { T.load(courseId); R.build(); drawProfile(); }
+/* --------------------------------- season --------------------------------
+   The hook's control surface. Picking a venue opens its season rather than
+   starting a race, because the interesting unit of play is now the SEASON: a
+   run is one decision inside it. */
+let seasonCourse = null;
+let pickedRoute = {};
+let lastClosed = [];
+let rivalRoutes = [];
+
+function openSeason(courseId) {
+  const forks = T.forksOf(courseId);
+  if (!forks.length) { startRun(courseId, null); return; }   // venues without forks still race
+  seasonCourse = courseId;
+  SEASON.begin(courseId, forks);
+  pickedRoute = SEASON.legalRoute(forks, T.defaultRoute(courseId));
+  lastClosed = [];
+  show('route');
+}
+
+/* Wear does two things and they are NOT the same: it eventually closes a road,
+   and long before that it makes it worse to drive. The second is the half you
+   feel, so it is baked into the course as grip and width factors. */
+function routeWithWear(courseId, picked) {
+  const out = {};
+  for (const f of T.forksOf(courseId)) {
+    const bid = picked[f.id];
+    const c = SEASON.conditionOf(f.id, bid);
+    const w = SEASON.wearEffect(c);
+    out[f.id] = { id: bid, grip: w.grip, width: w.width };
+  }
+  return out;
+}
+
+function drawRoute() {
+  const forks = T.forksOf(seasonCourse);
+  const st = SEASON.state();
+  el('rRun').textContent = Math.min(st.run, SEASON.RUNS);
+  el('rOf').textContent = SEASON.RUNS;
+  el('rPts').textContent = st.points;
+  el('rCourse').textContent = T.COURSES[seasonCourse].title;
+
+  el('rClosed').innerHTML = lastClosed.length
+    ? lastClosed.map((c) => `&mdash; ${c.branch.name} has gone`
+        + `${c.by === 'you' ? ', under your load' : ''}.`).join('<br>')
+    : '';
+
+  el('rForks').innerHTML = forks.map((f) => {
+    const opts = f.branches.map((b) => {
+      const c = SEASON.conditionOf(f.id, b.id);
+      const shut = c <= SEASON.CLOSED_AT;
+      const on = pickedRoute[f.id] === b.id && !shut;
+      return `<button class="opt${on ? ' on' : ''}${shut ? ' shut' : ''}`
+        + `${!shut && c < 0.3 ? ' warn' : ''}" data-fork="${f.id}" data-branch="${b.id}"
+           ${shut ? 'disabled' : ''}>
+          <div class="on1">${b.name}</div>
+          <div class="on2">${shut ? 'the road is gone' : b.note}</div>
+          <div class="cbar"><div class="cfill" style="width:${Math.round(c * 100)}%"></div></div>
+          <div class="cw">${SEASON.conditionWord(c)}</div>
+        </button>`;
+    }).join('');
+    return `<div class="fork"><div class="fh">${f.prompt}</div>
+            <div class="opts">${opts}</div></div>`;
+  }).join('');
+
+  el('rForks').querySelectorAll('.opt').forEach((b) => {
+    b.addEventListener('click', () => {
+      pickedRoute[b.dataset.fork] = b.dataset.branch;
+      drawRoute();
+    });
+  });
+
+  const dead = SEASON.impassable(forks);
+  el('rGo').textContent = dead ? 'there is no way down' : 'take the load down';
+  el('rGo').disabled = dead;
+}
+
+el('rGo').addEventListener('click', () => {
+  if (SEASON.impassable(T.forksOf(seasonCourse))) return;
+  startRun(seasonCourse, pickedRoute);
+});
+el('rSet').addEventListener('click', () => show('settings'));
+el('rQuit').addEventListener('click', () => {
+  SEASON.reset(seasonCourse, T.forksOf(seasonCourse));
+  pickedRoute = T.defaultRoute(seasonCourse);
+  lastClosed = [];
+  show('venues');
+});
+
+function startRun(courseId, route) {
+  /* Always rebuild when a route is in play: the same course with a different
+     route is a different centreline, so caching on course id alone would race
+     you down last run's mountain. */
+  if (courseId && (route || courseId !== T.ID)) {
+    T.load(courseId, route ? routeWithWear(courseId, route) : null);
+    R.build();
+    drawProfile();
+  }
+  /* Rivals wear the mountain too. Without this the road is being destroyed by
+     you alone, which reads as the game punishing you for playing. */
+  rivalRoutes = [];
+  if (route) {
+    for (const f of T.forksOf(courseId)) {
+      const open = SEASON.openBranches(f);
+      for (let i = 0; i < 4; i++) {
+        rivalRoutes[i] = rivalRoutes[i] || {};
+        rivalRoutes[i][f.id] = open.length
+          ? open[Math.floor(Math.random() * open.length)].id : f.branches[0].id;
+      }
+    }
+  }
   field = RACE.createField();
   R.setField(field.carts);
   S = field.you;
@@ -216,13 +326,22 @@ function drawVenues() {
       <div class="vb">${C.blurb}</div></div>
       <div class="vr">${b ? `<div class="n">${b.toFixed(2)}</div><div class="l">best</div>`
                           : '<div class="l">unrun</div>'}</div>`;
-    node.onclick = () => startRun(id);
+    node.onclick = () => openSeason(id);
     list.appendChild(node);
   }
 }
 
 el('go').onclick = () => show('venues');
-el('again').onclick = () => startRun();
+/* After a run you go back to the ROUTE BOARD, not straight into another race:
+   seeing what your last load did to the mountain is the point of the season. */
+el('again').onclick = () => {
+  const forks = T.forksOf(seasonCourse || T.ID);
+  if (!seasonCourse || !forks.length) { startRun(); return; }
+  const st = SEASON.state();
+  if (st && st.done) { SEASON.reset(seasonCourse, forks); lastClosed = []; }
+  pickedRoute = SEASON.legalRoute(forks, pickedRoute);
+  show('route');
+};
 el('doneVen').onclick = () => show('venues');
 el('venBack').onclick = () => show('intro');
 el('venSet').onclick = () => show('settings');
@@ -399,6 +518,27 @@ function finish() {
   } else {
     el('dbest').textContent = `best ${b.toFixed(2)}s`;
   }
+  /* Degrade the mountain. This is the moment the hook actually happens: the
+     line you just drove is worse than it was, and may be gone. */
+  const forks = T.forksOf(T.ID);
+  if (seasonCourse && forks.length) {
+    const r = SEASON.recordRun(forks, { ...T.ROUTE }, rivalRoutes, place);
+    lastClosed = r ? r.closed : [];
+    const st = SEASON.state();
+    el('dseason').textContent = st.done
+      ? (SEASON.impassable(forks) ? 'the road is finished — and so is the season'
+                                  : `season over — ${st.points} points`)
+      : `run ${st.run} of ${SEASON.RUNS} — ${st.points} points`;
+    el('dclosed').innerHTML = lastClosed.length
+      ? lastClosed.map((c) => `${c.branch.name} has gone`
+          + `${c.by === 'you' ? ', under your load' : ''}.`).join('<br>')
+      : '';
+    el('again').textContent = st.done ? 'a new season' : 'the road down';
+  } else {
+    el('dseason').textContent = '';
+    el('dclosed').textContent = '';
+  }
+
   AUDIO.sfx.place();
   show('done');
 }

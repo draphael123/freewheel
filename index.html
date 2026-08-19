@@ -46,6 +46,35 @@
         backdrop-filter:blur(9px) saturate(1.1);
         -webkit-backdrop-filter:blur(9px) saturate(1.1);
         box-shadow:0 6px 22px rgba(0,0,0,.34)}
+  /* ---- the route board ------------------------------------------------
+     Where the hook lives on screen. It has one job: make you feel the mountain
+     shrinking. Condition is a bar AND a word because people read words faster,
+     and a closed road stays LISTED with its chain across it rather than
+     disappearing — a road you can no longer take has to be visibly gone, not
+     quietly absent. */
+  #route .runline{display:flex;justify-content:space-between;align-items:baseline;
+       margin-bottom:16px;font-size:12px;letter-spacing:.2em;text-transform:uppercase;
+       color:var(--faint)}
+  #route .runline b{color:var(--warm);font-weight:400}
+  .fork{margin-bottom:20px}
+  .fork > .fh{font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+       color:var(--faint);margin-bottom:8px}
+  .fork .opts{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .opt{position:relative;text-align:left;padding:12px 14px;border:1px solid var(--edge);
+       border-radius:9px;background:rgba(255,255,255,.02);transition:.15s}
+  .opt:hover:not(.shut){border-color:rgba(242,235,222,.4)}
+  .opt.on{border-color:var(--warm);background:rgba(232,162,74,.09)}
+  .opt .on1{font-size:15px;margin-bottom:3px}
+  .opt .on2{font-size:11.5px;color:var(--dim);line-height:1.45;margin-bottom:9px}
+  .opt .cbar{position:relative;height:4px;border-radius:3px;background:rgba(242,235,222,.13)}
+  .opt .cfill{position:absolute;inset:0 auto 0 0;border-radius:3px;background:var(--warm)}
+  .opt .cw{margin-top:5px;font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+       color:var(--faint)}
+  .opt.shut{opacity:.42;cursor:not-allowed}
+  .opt.shut .cfill{background:var(--red)}
+  .opt.shut .on1{text-decoration:line-through}
+  .opt.warn .cfill{background:var(--red)}
+  #route .closed{margin:2px 0 16px;font-size:12px;color:var(--red);line-height:1.6}
   #hudWrap{opacity:0;transition:opacity .45s}
   #hudWrap.on{opacity:1}
 
@@ -338,6 +367,22 @@
   </div>
 </div></div>
 
+<!-- ----------------------------- route board --------------------------- -->
+<div class="screen" id="route"><div class="sheet">
+  <div class="title" style="font-size:22px">THE ROAD DOWN</div>
+  <div class="rule"></div>
+  <div class="runline"><span>run <b id="rRun">1</b> of <b id="rOf">8</b></span>
+    <span id="rCourse">THE VALE</span>
+    <span><b id="rPts">0</b> pts</span></div>
+  <div id="rClosed" class="closed"></div>
+  <div id="rForks"></div>
+  <div class="actions">
+    <button class="btn pri" id="rGo">take the load down</button>
+    <button class="btn" id="rSet">settings</button>
+    <button class="btn" id="rQuit">give up the season</button>
+  </div>
+</div></div>
+
 <!-- ------------------------------- finish ------------------------------ -->
 <div class="screen" id="done"><div class="sheet">
   <div class="lbl" id="dcourse">down</div>
@@ -346,6 +391,8 @@
   <div class="t num" id="dtime" style="font-size:40px;margin-top:16px">0.00</div>
   <div class="lbl">seconds</div>
   <div class="best" id="dbest"></div>
+  <div class="lbl" id="dseason" style="margin-top:10px"></div>
+  <div class="closed" id="dclosed" style="margin-top:6px"></div>
   <div class="r">top speed <b id="dtop">0</b> mph &middot; drifting <b id="dthrust">0</b>
     &middot; airborne <b id="dair">0</b>s</div>
   <div class="actions" style="justify-content:center">
