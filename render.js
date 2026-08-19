@@ -160,7 +160,7 @@ function buildRoad(tr) {
    effect. Built as loose quads rather than a texture so it follows the surface
    over crests without any UV stretching. */
 function buildCentreLine() {
-  const DASH = 3.5, GAP = 3.5, W = 0.30, LIFT = 0.05;
+  const DASH = 4.5, GAP = 4.0, W = 0.42, LIFT = 0.05;
   const pos = [], idx = [];
   let n = 0;
   for (let s0 = 4; s0 < T.LENGTH - DASH; s0 += DASH + GAP) {
@@ -699,7 +699,13 @@ export function frame(S, dt) {
   const pos = new THREE.Vector3(surf.x, y, surf.z).addScaledVector(nrm, 0.02);
 
   cart.position.copy(pos).addScaledVector(nrm, 0.34);
-  const m = new THREE.Matrix4().makeBasis(right, nrm, tan.clone().normalize());
+  /* setFromRotationMatrix assumes a pure rotation. {right, nrm, tan} has
+     determinant -1 at EVERY heading — it is a reflection, because nrm is built
+     as right x tan, so the handed order is (Z x X) not (X x Z). Feeding a
+     reflection in returns a meaningless quaternion, and the cart sat broadside
+     across the road at all times. Build X from nrm x tan instead. */
+  const bx = new THREE.Vector3().crossVectors(nrm, tan).normalize();
+  const m = new THREE.Matrix4().makeBasis(bx, nrm, tan.clone().normalize());
   cart.quaternion.setFromRotationMatrix(m);
 
   /* Crouch. The rider drops crouchTravel metres and folds; the aim is that
@@ -776,7 +782,9 @@ export function frame(S, dt) {
   const ahead = v3(T.surfaceAt(Math.min(T.LENGTH, S.s + lead), S.u * 0.5));
   const tgt = pos.clone().lerp(ahead, 0.62);
 
-  camSize += ((52 + S.v * 0.66) - camSize) * Math.min(1, dt * 1.8);
+  /* Widening the road is pointless if the view widens with it — the road has
+     to occupy MORE of the frame, not the same fraction of a bigger one. */
+  camSize += ((54 + S.v * 0.55) - camSize) * Math.min(1, dt * 1.8);
   applyCamSize(camSize);
 
   /* Shake, applied to the look target rather than the camera alone, so the

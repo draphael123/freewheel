@@ -14,7 +14,7 @@
    ========================================================================== */
 
 export const STEP = 0.5;                       // metres between centreline samples
-export const HALF_W = 5.0;                     // road half width, metres
+export const HALF_W = 8.5;                     // road half width, metres
 export const SLAB = 1.4;                       // road slab thickness, metres
 
 const smoothstep = (a, b, x) => {
@@ -25,16 +25,18 @@ const smoothstep = (a, b, x) => {
 /* Each segment: len metres, turn degrees over the whole segment, grade as
    rise/run (negative descends). Optional profile modifiers ride on top. */
 const SEGMENTS = [
-  { name: 'THE GATE',    len:  60, turn:    0, grade: -0.06 },
-  { name: 'STEEP DROP',  len: 110, turn:    0, grade: -0.30 },
-  { name: 'THE DIP',     len:  90, turn:    0, grade: -0.04, dip:    8.0 },
-  { name: 'THE CREST',   len:  80, turn:    0, grade: -0.12, crest:  7.0 },
-  { name: 'HAIRPIN L',   len: 130, turn: -150, grade: -0.16 },
-  { name: 'THE ROLLERS', len: 240, turn:   20, grade: -0.10, rollers: 5, rollAmp: 3.6 },
-  { name: 'THE CLIMB',   len: 100, turn:    0, grade: +0.07 },
-  { name: 'HAIRPIN R',   len: 130, turn:  160, grade: -0.14 },
-  { name: 'THE STEP',    len: 140, turn:    0, grade: -0.10, step:  14.0 },
-  { name: 'THE RUNOUT',  len: 200, turn:  -25, grade: -0.03 },
+  { name: 'THE GATE',    len:  70, turn:    0, grade: -0.10 },
+  { name: 'STEEP DROP',  len: 130, turn:    0, grade: -0.38 },
+  { name: 'THE DIP',     len: 100, turn:   15, grade: -0.14, dip:   10.0 },
+  { name: 'FIRST STEP',  len: 110, turn:    0, grade: -0.16, step:  11.0 },
+  { name: 'HAIRPIN L',   len: 140, turn: -150, grade: -0.20 },
+  { name: 'THE ROLLERS', len: 260, turn:   20, grade: -0.16, rollers: 5, rollAmp: 4.4 },
+  { name: 'THE CHUTE',   len: 120, turn:  -30, grade: -0.42 },
+  { name: 'THE CLIMB',   len:  90, turn:    0, grade: +0.09 },
+  { name: 'HAIRPIN R',   len: 140, turn:  160, grade: -0.18 },
+  { name: 'THE STEP',    len: 150, turn:    0, grade: -0.14, step:  16.0 },
+  { name: 'THE STAIRS',  len: 180, turn:  -20, grade: -0.20, stairs: 4, stairH: 5.0 },
+  { name: 'THE RUNOUT',  len: 180, turn:  -25, grade: -0.06 },
 ];
 
 /* What each modifier adds to the base height, as a function of a = t/len.
@@ -54,6 +56,11 @@ function extraY(seg, a) {
   if (seg.crest)   y +=  seg.crest * hump(1);
   if (seg.rollers) y += -seg.rollAmp * hump(seg.rollers);
   if (seg.step)    y += -seg.step  * smoothstep(0.44, 0.56, a);
+  if (seg.stairs) {                       // a flight of drops, not one cliff
+    for (let k = 0; k < seg.stairs; k++) {
+      y += -seg.stairH * smoothstep((k + 0.34) / seg.stairs, (k + 0.62) / seg.stairs, a);
+    }
+  }
   return y;
 }
 

@@ -17,13 +17,21 @@ Hold **SPACE** to tuck: low drag, cheap, and the correct default.
 and you pump speed out of the hill itself, exactly the way a skater pumps a
 bowl. Crouch again over the crest. Stand up anywhere else and you are a sail.
 
+Every good pump also winds the **flywheel**. Hold **W** to spend it — on climbs
+and flats, where gravity gives you nothing. A badly timed pump unwinds it just as
+fast, so the throttle is real but its fuel is still the hill.
+
 | | |
 |---|---|
 | `SPACE` | tuck (hold) |
+| `W` | spend flywheel |
 | `A` / `D` | steer |
 | `S` | drag brake |
 | `R` | restart |
 | `ESC` | settings |
+
+The course is **1670 m with a 338 m drop** — a 20% average grade, three drop-offs
+(two cliffs and a flight of stairs), and 12-15 s of airtime in a normal run.
 
 ## Status
 
@@ -54,9 +62,16 @@ Physics numbers came out of `FW.sim()`, not out of taste:
   intuitive move and it is exactly wrong — you arrive already standing and did
   all the work in the crest before it. A 6 m lookahead put the rider perfectly
   anti-phase and turned a +7 m/s mechanic into −7.5 m/s.
-- **Skill gradient holds**: `pump 92.3 s` > `tucked 96.5 s` > `mash DNF` >
-  `open DNF`. Mashing is punished correctly — it nets +0.6 m/s of pump and pays
-  16.6 in drag.
+- **Skill gradient holds**: `pump 82.1 s` > `mash 87.9 s` > `pumpNoThrust 88.8 s` >
+  `tucked 92.3 s` > `open 118.7 s`. Skilled play beats mashing by 5.8 s; pumping
+  with no throttle at all still beats doing nothing by 3.5 s.
+- **The flywheel must charge on NET pump, not gross.** Crediting only the positive
+  half of a cycle let a rider who simply mashed the key farm charge off the good
+  halves while the bad halves cost speed but no charge — measured, mashing beat
+  playing properly.
+- **A left-handed basis is not a rotation.** `{right, nrm, tan}` has determinant
+  −1 at every heading, and `setFromRotationMatrix` silently returns a meaningless
+  quaternion — the cart sat broadside across the road for the entire build.
 - **A vertical drop viewed end-on is invisible** on this camera. Big elevation
   changes want to be seen side-on, after a turn. The cues that actually carry
   height are the **landing ring**, the **tether**, and **road walls that reach

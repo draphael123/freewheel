@@ -74,7 +74,8 @@ el('toIntro').onclick = () => show('intro');
 const keys = new Set();
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
-  if ([' ', 'a', 'd', 's', 'arrowleft', 'arrowright', 'arrowdown'].includes(k)) e.preventDefault();
+  if ([' ', 'a', 'd', 's', 'w', 'arrowleft', 'arrowright', 'arrowdown', 'arrowup']
+      .includes(k)) e.preventDefault();
   if (keys.has(k)) return;
   keys.add(k);
 
@@ -95,6 +96,7 @@ addEventListener('blur', () => keys.clear());
 function readInput() {
   S.input.tuck = keys.has(' ');
   S.input.brake = keys.has('s') || keys.has('arrowdown');
+  S.input.thrust = keys.has('w') || keys.has('arrowup') || keys.has('shift');
   S.input.steer = (keys.has('d') || keys.has('arrowright') ? 1 : 0)
                 - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
 }
@@ -125,6 +127,13 @@ function updateHUD(dt) {
   const load = S.air ? 0 : S.N;
   el('loadfill').style.width = Math.min(100, load * 33.3) + '%';
   el('loadfill').style.background = load > 1.25 ? 'var(--warm)' : 'var(--cold)';
+  /* Flywheel. Shown in seconds because that is what you spend. */
+  const ch = S.charge / SIM.tune.chargeMax;
+  el('chgfill').style.width = (ch * 100) + '%';
+  el('chgnum').textContent = S.charge.toFixed(1) + 's';
+  el('chg').classList.toggle('spent', S.input.thrust && S.charge > 0);
+  el('chg').classList.toggle('ready', S.charge > 0.25);
+
   const want = S.air ? 'airborne' : (load > 1.25 ? 'stand up' : 'tuck');
   el('cue').textContent = want;
   el('cue').classList.toggle('on', want === 'stand up');
@@ -151,6 +160,7 @@ function finish() {
   el('dtop').textContent = Math.round(S.vMax * 2.2369);
   el('dpump').textContent = (S.pumpTotal * 2.2369).toFixed(1);
   el('dair').textContent = S.airTotal.toFixed(1);
+  el('dthrust').textContent = (S.thrustTotal * 2.2369).toFixed(1);
   if (best === null || S.t < best) {
     best = S.t; localStorage.setItem('fw.best', String(best));
     el('dbest').textContent = 'a new best';

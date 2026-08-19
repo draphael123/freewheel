@@ -31,7 +31,7 @@ export const tune = {
 
   crouchRate: 3.6,        // how fast the rider moves between tuck and stand, /s
   crouchTravel: 0.45,     // how far the centre of mass moves, metres
-  pumpGain: 9.0,          /* 1.0 is the honest physics, and at 1.0 the mechanic
+  pumpGain: 18.0,         /* 1.0 is the honest physics, and at 1.0 the mechanic
                              is dead: pump gain gsn scales as v*kv while the drag
                              cost of standing scales as v*v, so on road-scale
                              curvature standing NEVER pays. Real pumping works
@@ -39,8 +39,12 @@ export const tune = {
                              road. This is the number that buys the fantasy.
                              Swept 5.5-16: below 7 pumping is worth under a
                              second over 96 s (noise), at 16 it is worth 7.6 s
-                             and tucking stops mattering. 9 buys ~4.4%. */
-  pumpKvMin: 0.015,       /* Do not bother pumping gentler curvature than this.
+                             and tucking stops mattering. Re-swept after the
+                             course was steepened to a 20% average grade: higher
+                             speeds raise the v^2 drag cost faster than the v
+                             pump gain, so the same 9 stopped paying and 18 is
+                             what the steeper hill needs. */
+  pumpKvMin: 0.018,       /* Do not bother pumping gentler curvature than this.
                              Standing costs drag continuously while a pump pays
                              once, so under this threshold the hold eats the
                              gain. Swept: anywhere in 0.004-0.026 still wins,
@@ -52,6 +56,14 @@ export const tune = {
   slide: 0.010,           // how hard a corner throws you toward the outside
   uMax: T.HALF_W + 3.5,   // hard stop, so nobody tests the void
 
+  /* The flywheel. Pumping spins it up, the throttle lets it back out — so
+     there is a real accelerate button whose fuel is still the hill, which is
+     the whole premise. Charge is measured in SECONDS of thrust remaining,
+     because that is the only unit a player can actually reason about. */
+  thrust: 4.2,            // m/s^2 while spending
+  chargeMax: 2.2,         // seconds of thrust the wheel can hold
+  chargePerPump: 0.9,     // seconds banked per m/s of pump gain
+
   startSpeed: 2.0,
 };
 
@@ -61,12 +73,13 @@ export function create() {
     c: 1,                   // crouch state. 0 = fully tucked, 1 = fully upright
     air: false, yAir: 0, vyAir: 0,
     t: 0, done: false,
+    charge: 0,              // seconds of thrust in the flywheel
     N: 1,                   // load in g. the thing you are pumping against
     pumpRate: 0,            // dv/dt currently coming from the pump, for the HUD
     lastPump: 0,            // speed gained by the most recent extension
     pumpTotal: 0, brakeTotal: 0, airTotal: 0,
-    vMax: 0, lastLanding: 0,
-    input: { tuck: false, steer: 0, brake: false },
+    vMax: 0, lastLanding: 0, thrustTotal: 0,
+    input: { tuck: false, steer: 0, brake: false, thrust: false },
   };
 }
 
@@ -142,6 +155,23 @@ export function step(S, dt) {
       else if (cdot === 0) S.lastPump *= 0.90;
       if (pump > 0) S.pumpTotal += pump * dt;
 
+      /* Charge follows the SIGNED pump, so a badly timed extension drains the
+         wheel as surely as a good one fills it. Accruing on the positive half
+         only let a rider who simply mashed the key farm charge from the good
+         halves of a cycle while the bad halves cost speed but no charge —
+         measured, mashing beat playing properly by a second. */
+      S.charge = Math.max(0, Math.min(K.chargeMax,
+        S.charge + pump * dt * K.chargePerPump));
+
+      /* Spending. Deliberately available on climbs and flats, where gravity
+         gives you nothing — that is where a throttle is worth having and where
+         reading the hill turns into a decision rather than a reflex. */
+      if (S.input.thrust && S.charge > 0) {
+        a += K.thrust;
+        S.charge = Math.max(0, S.charge - dt);
+        S.thrustTotal += K.thrust * dt;
+      }
+
       const drag = K.dragTuck + (K.dragOpen - K.dragTuck) * S.c;
       a -= drag * S.v * S.v;
       a -= K.roll;
@@ -174,14 +204,15 @@ export function step(S, dt) {
    -------------------------------------------------------------------------- */
 export const POLICIES = {
   /* Never stands up. The aero baseline: what you get for doing nothing. */
-  tucked: () => ({ tuck: true, steer: 0, brake: false }),
+  tucked: () => ({ tuck: true, steer: 0, brake: false, thrust: false }),
 
   /* Never tucks. Should lose badly on drag — if it does not, the aero trade
      carries no weight and the tuck key is decoration. */
-  open: () => ({ tuck: false, steer: 0, brake: false }),
+  open: () => ({ tuck: false, steer: 0, brake: false, thrust: false }),
 
   /* Mashing. If this beats tucked, the mechanic rewards noise, not timing. */
-  mash: (S) => ({ tuck: (Math.floor(S.t * 6) % 2) === 0, steer: 0, brake: false }),
+  mash: (S) => ({ tuck: (Math.floor(S.t * 6) % 2) === 0, steer: 0,
+                  brake: false, thrust: (Math.floor(S.t * 5) % 2) === 0 }),
 
   /* Plays it properly. The rider oscillates IN PHASE WITH THE ROAD: stand
      through a compression, crouch over a crest, and tuck on anything flat
@@ -198,8 +229,20 @@ export const POLICIES = {
        every joule of that work went into the crest you were still crossing.
        Measured, a 6 m lead put the rider perfectly anti-phase and turned a
        +7 m/s mechanic into -7.5 m/s. Stand up THROUGH the compression. */
-    return { tuck: T.kvAt(S.s) < tune.pumpKvMin, steer: 0, brake: false };
+    const kv = T.kvAt(S.s);
+    return {
+      tuck: kv < tune.pumpKvMin, steer: 0, brake: false,
+      /* Spend where gravity is not already paying: shallow or uphill road,
+         and never while a compression is available to pump. */
+      thrust: S.charge > 0 && kv < tune.pumpKvMin && T.pitchAt(S.s) > -0.14,
+    };
   },
+
+  /* The same rider with the flywheel disabled, so the throttle's contribution
+     can be read off rather than assumed. */
+  pumpNoThrust: (S) => ({
+    tuck: T.kvAt(S.s) < tune.pumpKvMin, steer: 0, brake: false, thrust: false,
+  }),
 };
 
 /* Run one policy to the bottom. Returns a not-finished row rather than numbers
@@ -232,10 +275,12 @@ export function run(policyName, opts = {}) {
     vMax: +S.vMax.toFixed(2),
     vMaxMph: +(S.vMax * 2.2369).toFixed(1),
     pumpGain: +S.pumpTotal.toFixed(2),
+    thrustUsed: +S.thrustTotal.toFixed(2),
     airTime: +S.airTotal.toFixed(2),
   };
 }
 
 export function sim(opts = {}) {
-  return (opts.policies || ['open', 'mash', 'tucked', 'pump']).map(n => run(n, opts));
+  return (opts.policies
+    || ['open', 'mash', 'tucked', 'pumpNoThrust', 'pump']).map(n => run(n, opts));
 }
