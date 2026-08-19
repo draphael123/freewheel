@@ -325,7 +325,11 @@ function frameBody(now) {
          nobody rolls away down a 10% slope while the lights are still on. */
       countdown -= dt;
       const n = countdown > 0.35 ? Math.ceil(countdown - 0.2) : 0;
-      if (n !== lastCount) { lastCount = n; n > 0 ? AUDIO.sfx.count() : AUDIO.sfx.go(); }
+      if (n !== lastCount) {
+        lastCount = n;
+        n > 0 ? AUDIO.sfx.count() : AUDIO.sfx.go();
+        R.setStartLights(n > 0);
+      }
       el('count').textContent = n > 0 ? String(n) : 'GO';
       el('count').classList.toggle('go', n === 0);
       acc = 0;

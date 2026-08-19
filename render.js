@@ -12,6 +12,7 @@
 import * as THREE from './vendor/three.module.js';
 import * as T from './track.js';
 import * as THEME from './theme.js';
+import * as POST from './post.js';
 
 export const SHOULDER = 1.7;
 
@@ -34,6 +35,7 @@ export function setRes(scale) {
 }
 
 let renderer, scene, camera, persp, cart, rider, blob, reticle, tether, sun, hemi, fog;
+export const post = POST.opts;
 export const VIEWS = ['iso', 'chase', 'cockpit'];
 let view = 'iso';
 export const setView = (v) => { view = VIEWS.includes(v) ? v : 'iso'; resize(); };
@@ -929,6 +931,14 @@ function buildTunnels() {
    on the road itself. */
 /* Set pieces. A course needs things you can name — a start you leave, a finish
    you arrive at, and one landmark per zone tall enough to see coming. */
+/* Start-light bulbs, held so the countdown can drive them. Lights that go
+   green when the race starts are the cheapest possible way to make a standing
+   start feel like an event rather than a number appearing on screen. */
+let startBulbs = [];
+export function setStartLights(on) {
+  for (const b of startBulbs) b.material.color.setHex(on ? 0xd8482e : 0x36c46a);
+}
+
 function buildSetPieces(tr) {
   const dark = new THREE.MeshLambertMaterial({ color: 0x3a352f });
   const pale = new THREE.MeshLambertMaterial({ color: 0xe6e0d2 });
@@ -968,7 +978,7 @@ function buildSetPieces(tr) {
       p.castShadow = true;
       courseRoot.add(p);
     }
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(w * 2 + 0.8, 1.5, 0.6), dark);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(w * 2 + 0.8, 0.95, 0.6), dark);
     beam.position.copy(c).addScaledVector(nrm, H - 0.4);
     beam.quaternion.setFromRotationMatrix(B);
     beam.castShadow = true;
@@ -977,12 +987,18 @@ function buildSetPieces(tr) {
     for (let i = -2; i <= 2; i++) {
       const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.34, 8, 6),
         new THREE.MeshBasicMaterial({ color: label ? 0xd8482e : 0xe8e2d4 }));
-      bulb.position.copy(c).addScaledVector(nrm, H - 1.3)
+      bulb.position.copy(c).addScaledVector(nrm, H - 1.1)
         .addScaledVector(right, i * (w * 0.42));
       courseRoot.add(bulb);
+      if (label) startBulbs.push(bulb);
     }
   };
-  arch(10, true);
+  /* 10 m put the beam almost directly over the camera at lights-out, where an
+     8.4 m gantry subtends 35 degrees and reads as a dark ceiling clipped by the
+     top of the frame rather than as a start gantry. 30 m puts the whole thing
+     in shot. */
+  startBulbs.length = 0;
+  arch(30, true);
   arch(T.LENGTH - 14, false);
 
   /* One landmark per zone that has one: a church in the village, a lighthouse
@@ -1893,6 +1909,7 @@ export function init(canvas) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.95;
+  POST.init(THREE, renderer);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   scene = new THREE.Scene();
@@ -2007,6 +2024,11 @@ export function build() {
 export function resize() {
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false);
+  /* The post buffers live at the DRAWING buffer size, not the CSS size — at a
+     device pixel ratio of 2 a full-screen pass at CSS size samples half the
+     frame and the whole image goes soft. */
+  const dpr = renderer.getPixelRatio();
+  POST.setSize(w * dpr, h * dpr);
   applyCamSize(camSize);
 }
 
@@ -2279,8 +2301,17 @@ export function frame(S, dt) {
     updateDust(S, dt, surf.clone().addScaledVector(tan, -1.1).addScaledVector(nrm, 0.25), right);
   }
 
-  renderer.render(scene, active);
+  /* Post. `speed` is normalised so the lens effects have something meaningful
+     to scale against: aberration and speed lines at 20 mph would just be
+     noise. Falls back to a plain render if the chain is off or unavailable. */
+  postClock += dt;
+  const spd = Math.max(0, Math.min(1, (S.v - 12) / 26));
+  if (!POST.opts.enabled ||
+      !POST.render(scene, active, spd, TH.exposure, postClock)) {
+    renderer.render(scene, active);
+  }
 }
+let postClock = 0;
 
 export function cameraYaw() { return camYaw; }
 export const _dbg = () => ({ scene, camera, persp, roadMesh, cart, blob, sun, view });
