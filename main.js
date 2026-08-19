@@ -96,13 +96,18 @@ function drawVenues() {
   for (const id of T.COURSE_IDS) {
     const C = T.COURSES[id];
     const th = THEME.get(C.theme);
-    const stops = th.terrain.stops;
-    const css = (c) => `rgb(${c.map((v) => Math.round(Math.min(1, v * 1.25) * 255)).join(',')})`;
+    /* Swatch from the zones the course actually visits, first and last, so the
+       chip previews the journey rather than a palette. */
+    const zs = [...new Set(C.segments.map((g) => g.zone || 'forest'))];
+    const css = (id) => {
+      const c = (th.zones[id] || th.zones.forest).ground;
+      return `rgb(${c.map((v) => Math.round(Math.min(1, v * 1.25) * 255)).join(',')})`;
+    };
     const b = bestFor(id);
     const node = document.createElement('button');
     node.className = 'venue';
-    node.style.setProperty('--c1', css(stops[stops.length - 1][1]));
-    node.style.setProperty('--c2', css(stops[1][1]));
+    node.style.setProperty('--c1', css(zs[0]));
+    node.style.setProperty('--c2', css(zs[zs.length - 1]));
     node.innerHTML = `<div class="sw"></div>
       <div><div class="vt">${C.title}</div>
       <div class="vo">owns &mdash; ${C.owns}</div>

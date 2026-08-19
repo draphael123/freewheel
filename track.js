@@ -31,33 +31,42 @@ const smoothstep = (a, b, x) => {
 export const COURSES = {
   vale: {
     title: 'THE VALE',
-    blurb: 'A real road. Pinches, a chicane and two hairpins — lift out of the tuck or you will run wide.',
+    blurb: 'Snowline to sea in one run — pinewood, a gorge span, a rock adit, terraces and the village street.',
     owns: 'line choice',
     theme: 'alpine',
     halfW: 8.0, slab: 1.4, grip: 1.0,
+    /* A journey, not a list of corners. `zone` is what makes a course feel like
+       somewhere rather than a ribbon: it drives ground colour, what is scattered
+       beside the road and where the buildings are, so the world changes under
+       you at authored moments instead of drifting with altitude. */
     segments: [
-      { name: 'THE GATE',    len:  60, turn:    0, grade: -0.12, w: 8.0 },
-      { name: 'FIRST DROP',  len: 100, turn:  -30, grade: -0.32, w: 7.5 },
-      { name: 'THE NARROWS', len:  90, turn:   45, grade: -0.16, w: 5.2 },
-      { name: 'THE LEAP',    len: 110, turn:    0, grade: -0.14, w: 7.5, step: 9.0 },
-      { name: 'HAIRPIN L',   len: 100, turn: -160, grade: -0.18, w: 8.5, bank: 10 },
-      { name: 'THE ESSES',   len: 150, turn:   10, grade: -0.20, w: 6.4, esses: 3, essAmp: 26 },
-      { name: 'THE SWEEP',   len: 170, turn:   85, grade: -0.19, w: 9.0, bank: 12 },
-      { name: 'THE PINCH',   len:  70, turn:  -20, grade: -0.10, w: 4.6 },
-      { name: 'THE STAIRS',  len: 120, turn:   25, grade: -0.22, w: 7.5, stairs: 3, stairH: 4.5 },
-      { name: 'HAIRPIN R',   len: 100, turn:  150, grade: -0.16, w: 8.5, bank: 10 },
-      { name: 'THE RUN IN',  len: 140, turn:  -35, grade: -0.13, w: 8.0 },
+      { name: 'THE GATE',     len:  90, turn:    0, grade: -0.10, w: 9.0, zone: 'snow' },
+      { name: 'THE CORNICE',  len: 170, turn:   55, grade: -0.14, w: 9.5, zone: 'snow', grip: 0.72, bank: 6 },
+      { name: 'STEEP DROP',   len: 140, turn:  -35, grade: -0.34, w: 7.5, zone: 'snow' },
+      { name: 'THE PINEWOOD', len: 200, turn:   70, grade: -0.18, w: 5.8, zone: 'forest' },
+      { name: 'THE LEAP',     len: 120, turn:  -15, grade: -0.15, w: 7.0, zone: 'forest', step: 10.0 },
+      { name: 'HAIRPIN L',    len: 110, turn: -165, grade: -0.19, w: 8.5, zone: 'forest', bank: 11 },
+      { name: 'THE SPAN',     len: 150, turn:   20, grade: -0.09, w: 6.0, zone: 'rock', bridge: true },
+      { name: 'THE ESSES',    len: 170, turn:   10, grade: -0.20, w: 6.6, zone: 'rock', esses: 3, essAmp: 24 },
+      { name: 'THE ADIT',     len: 130, turn:  -40, grade: -0.16, w: 6.2, zone: 'rock', tunnel: true },
+      { name: 'THE TERRACES', len: 190, turn:   60, grade: -0.21, w: 8.0, zone: 'farm', stairs: 3, stairH: 5.0 },
+      { name: 'THE SWEEP',    len: 200, turn:   95, grade: -0.18, w: 9.5, zone: 'farm', bank: 13 },
+      { name: 'THE PINCH',    len:  80, turn:  -25, grade: -0.11, w: 4.6, zone: 'village' },
+      { name: 'THE VILLAGE',  len: 190, turn:   45, grade: -0.14, w: 6.4, zone: 'village' },
+      { name: 'THE STEPS',    len: 130, turn:  -30, grade: -0.24, w: 7.0, zone: 'village', stairs: 3, stairH: 4.0 },
+      { name: 'HAIRPIN R',    len: 110, turn:  155, grade: -0.15, w: 8.5, zone: 'village', bank: 11 },
+      { name: 'THE QUAY',     len: 200, turn:  -45, grade: -0.07, w: 9.0, zone: 'shore' },
     ],
-    /* Bales left on the road. u is signed across the road, so a hazard on the
-       inside of a corner is a different problem from one on the outside. */
     hazards: [
-      { s: 235, u: -2.6 }, { s: 246, u:  1.0 },
-      { s: 372, u:  3.0 },
-      { s: 520, u: -4.2 }, { s: 534, u: -1.4 },
-      { s: 700, u:  2.2 }, { s: 712, u: -0.6 },
-      { s: 880, u:  4.0 },
-      { s: 972, u: -1.8 },
-      { s: 1112, u: 2.8 }, { s: 1124, u: 0.2 },
+      { s: 320, u: -3.0 }, { s: 334, u: 0.6 },
+      { s: 560, u:  2.0 },
+      { s: 690, u: -2.4 }, { s: 702, u: 1.2 },
+      { s: 1010, u: 1.8 },
+      { s: 1180, u: -2.2 }, { s: 1194, u: 1.4 },
+      { s: 1470, u: 2.6 },
+      { s: 1620, u: -3.4 },
+      { s: 1880, u: 1.0 }, { s: 1892, u: -2.6 },
+      { s: 2080, u: -1.2 },
     ],
   },
 
@@ -68,16 +77,16 @@ export const COURSES = {
     theme: 'concrete',
     halfW: 11.0, slab: 2.2, grip: 1.05,
     segments: [
-      { name: 'THE HEADRACE',  len:  90, turn:    0, grade: -0.12 },
-      { name: 'FIRST BOWL',    len: 120, turn:   10, grade: -0.10, dip: 5.5 },
-      { name: 'THE WASHBOARD', len: 220, turn:  -12, grade: -0.13, bowls: 7, bowlAmp: 0.85 },
-      { name: 'THE WEIR',      len: 110, turn:    0, grade: -0.14, step: 9.0 },
-      { name: 'THE BEND',      len: 140, turn:  -95, grade: -0.16, bank: 22 },
-      { name: 'THE COMBS',     len: 240, turn:   15, grade: -0.14, bowls: 8, bowlAmp: 0.80 },
-      { name: 'THE SIPHON',    len:  90, turn:   60, grade: +0.04, bank: 14 },
-      { name: 'DROP SHAFT',    len: 130, turn:    0, grade: -0.20, stairs: 3, stairH: 7.0 },
-      { name: 'THE FLUME',     len: 260, turn:  -70, grade: -0.18, bank: 18, bowls: 6, bowlAmp: 0.90 },
-      { name: 'THE OUTFALL',   len: 160, turn:   25, grade: -0.05 },
+      { name: 'THE HEADRACE',  len:  90, turn:    0, grade: -0.12 , zone: 'rock' },
+      { name: 'FIRST BOWL',    len: 120, turn:   10, grade: -0.10, dip: 5.5 , zone: 'rock' },
+      { name: 'THE WASHBOARD', len: 220, turn:  -12, grade: -0.13, bowls: 7, bowlAmp: 0.85 , zone: 'rock' },
+      { name: 'THE WEIR',      len: 110, turn:    0, grade: -0.14, step: 9.0 , zone: 'rock' },
+      { name: 'THE BEND',      len: 140, turn:  -95, grade: -0.16, bank: 22 , zone: 'rock' },
+      { name: 'THE COMBS',     len: 240, turn:   15, grade: -0.14, bowls: 8, bowlAmp: 0.80 , zone: 'rock' },
+      { name: 'THE SIPHON',    len:  90, turn:   60, grade: +0.04, bank: 14 , zone: 'rock' },
+      { name: 'DROP SHAFT',    len: 130, turn:    0, grade: -0.20, stairs: 3, stairH: 7.0 , zone: 'rock' },
+      { name: 'THE FLUME',     len: 260, turn:  -70, grade: -0.18, bank: 18, bowls: 6, bowlAmp: 0.90 , zone: 'rock' },
+      { name: 'THE OUTFALL',   len: 160, turn:   25, grade: -0.05 , zone: 'rock' },
     ],
   },
 
@@ -88,15 +97,15 @@ export const COURSES = {
     theme: 'ice',
     halfW: 10.0, slab: 1.6, grip: 0.42,
     segments: [
-      { name: 'THE CORNICE',  len: 110, turn:    0, grade: -0.16 },
-      { name: 'THE FACE',     len: 160, turn:  -40, grade: -0.30 },
-      { name: 'THE TRAVERSE', len: 260, turn:   85, grade: -0.11, bank: 5 },
-      { name: 'THE SERACS',   len: 140, turn:  -20, grade: -0.18, stairs: 3, stairH: 5.5 },
-      { name: 'THE BOWL',     len: 200, turn:  120, grade: -0.15, bank: 12, dip: 7.0 },
-      { name: 'THE NARROWS',  len: 150, turn:  -60, grade: -0.22, grip: 0.34 },
-      { name: 'THE SHELF',    len: 120, turn:   30, grade: +0.05 },
-      { name: 'THE DRIFT',    len: 240, turn:  -80, grade: -0.12, bank: 6, rollers: 3, rollAmp: 3.0 },
-      { name: 'THE LAKE',     len: 200, turn:   20, grade: -0.04, grip: 0.28 },
+      { name: 'THE CORNICE',  len: 110, turn:    0, grade: -0.16 , zone: 'snow' },
+      { name: 'THE FACE',     len: 160, turn:  -40, grade: -0.30 , zone: 'snow' },
+      { name: 'THE TRAVERSE', len: 260, turn:   85, grade: -0.11, bank: 5 , zone: 'snow' },
+      { name: 'THE SERACS',   len: 140, turn:  -20, grade: -0.18, stairs: 3, stairH: 5.5 , zone: 'snow' },
+      { name: 'THE BOWL',     len: 200, turn:  120, grade: -0.15, bank: 12, dip: 7.0 , zone: 'snow' },
+      { name: 'THE NARROWS',  len: 150, turn:  -60, grade: -0.22, grip: 0.34 , zone: 'snow' },
+      { name: 'THE SHELF',    len: 120, turn:   30, grade: +0.05 , zone: 'snow' },
+      { name: 'THE DRIFT',    len: 240, turn:  -80, grade: -0.12, bank: 6, rollers: 3, rollAmp: 3.0 , zone: 'snow' },
+      { name: 'THE LAKE',     len: 200, turn:   20, grade: -0.04, grip: 0.28 , zone: 'snow' },
     ],
   },
 };
@@ -187,6 +196,8 @@ export function load(id) {
         grip: ramp(prevGrip, grip, a),
         bankMag: ramp(prevBank, bank, a),
         halfW: ramp(prevW, w, a),
+        zone: seg.zone || 'forest',
+        tunnel: !!seg.tunnel, bridge: !!seg.bridge,
       });
       const hd = heading + essAt(seg, a);
       heading += turnPerM * STEP;
@@ -201,6 +212,7 @@ export function load(id) {
   pts.push({
     x, y: base, z, s, seg: C.segments.length - 1,
     grip: prevGrip, bankMag: prevBank, halfW: prevW,
+    zone: C.segments[C.segments.length - 1].zone || 'forest', tunnel: false, bridge: false,
   });
 
   /* Frames. Pitch is signed: negative descends. Vertical curvature is the rate
@@ -263,6 +275,10 @@ export const bankAt  = (s) => lerpField(s, 'bank');
    corner into a decision, and it costs one number per segment. HALF_W is kept
    as the course maximum, for anything that needs a fixed envelope. */
 export const halfWAt = (s) => lerpField(s, 'halfW');
+const at = (s) => PTS[Math.round(Math.min(PTS.length - 1, Math.max(0, s / STEP)))];
+export const zoneAt   = (s) => at(s).zone;
+export const tunnelAt = (s) => at(s).tunnel;
+export const bridgeAt = (s) => at(s).bridge;
 
 /* Hazards within reach of a cart. A linear scan is fine — a course has a dozen
    of these, and an index would cost more to keep honest than it saves. */

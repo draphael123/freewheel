@@ -27,15 +27,18 @@ export const THEMES = {
     dash: 0xcfc4ab, dashOn: true,
     post: { a: 0xd8d2c4, b: 0xc2452e }, pylon: 0x6b5c4c,
 
-    terrain: {
-      stops: [
-        [0.00, [.34, .33, .30]], [0.19, [.34, .33, .30]],
-        [0.26, [.52, .41, .20]], [0.42, [.52, .41, .20]],
-        [0.50, [.22, .34, .23]], [0.74, [.22, .34, .23]],
-        [0.81, [.74, .77, .82]], [1.00, [.74, .77, .82]],
-      ],
-      rock: [.30, .27, .25], relief: 1.0, tint: 0.34,
+    terrain: { rock: [.30, .27, .25], relief: 1.0, tint: 0.34 },
+    /* Ground and scatter per ZONE. Colouring by altitude drifted; colouring by
+       zone means the world changes where the course says it should. */
+    zones: {
+      snow:    { ground: [.74, .77, .83], trees: 0.00, rocks: 0.8, blds: 0.0 },
+      forest:  { ground: [.19, .30, .20], trees: 1.60, rocks: 0.3, blds: 0.0 },
+      rock:    { ground: [.37, .35, .32], trees: 0.15, rocks: 2.0, blds: 0.0 },
+      farm:    { ground: [.53, .45, .23], trees: 0.30, rocks: 0.2, blds: 0.5 },
+      village: { ground: [.36, .35, .31], trees: 0.18, rocks: 0.1, blds: 2.4 },
+      shore:   { ground: [.47, .47, .45], trees: 0.10, rocks: 0.7, blds: 0.9 },
     },
+    bld: [0xcfc3ad, 0xb9a88e, 0x9c8b74, 0x8a6f56], roof: 0x7a3a2c,
     scatter: {
       trees: 820, rocks: 190, clump: 0.36, altHi: 0.80, altLo: 0.14,
       coneA: 0x4d6b47, coneB: 0x63794f, trunk: 0x5a4634, rockCol: 0x6d6459,
@@ -65,15 +68,16 @@ export const THEMES = {
     dash: 0xd6d0be, dashOn: true,
     post: { a: 0xe0d29a, b: 0x33322e }, pylon: 0x8e887c,
 
-    terrain: {
-      stops: [
-        [0.00, [.44, .42, .35]], [0.20, [.44, .42, .35]],
-        [0.30, [.62, .53, .33]], [0.52, [.62, .53, .33]],
-        [0.62, [.50, .48, .34]], [0.82, [.50, .48, .34]],
-        [0.90, [.66, .62, .54]], [1.00, [.66, .62, .54]],
-      ],
-      rock: [.56, .53, .47], relief: 1.05, tint: 0.30,
+    terrain: { rock: [.56, .53, .47], relief: 1.05, tint: 0.30 },
+    zones: {
+      snow:    { ground: [.66, .62, .54], trees: 0.05, rocks: 1.4, blds: 0.0 },
+      forest:  { ground: [.44, .45, .32], trees: 0.90, rocks: 0.6, blds: 0.0 },
+      rock:    { ground: [.58, .53, .40], trees: 0.10, rocks: 2.4, blds: 0.0 },
+      farm:    { ground: [.62, .53, .33], trees: 0.25, rocks: 0.5, blds: 0.4 },
+      village: { ground: [.50, .48, .42], trees: 0.10, rocks: 0.3, blds: 1.8 },
+      shore:   { ground: [.55, .53, .47], trees: 0.05, rocks: 1.0, blds: 0.7 },
     },
+    bld: [0xb8ac96, 0xa1937c, 0x8b7f6a, 0x6f6353], roof: 0x5c5346,
     scatter: {
       trees: 210, rocks: 520, clump: 0.55, altHi: 0.74, altLo: 0.06,
       coneA: 0x4a4b32, coneB: 0x565638, trunk: 0x4a4034, rockCol: 0x8b8478,
@@ -98,14 +102,16 @@ export const THEMES = {
     dash: 0xf0a24a, dashOn: true,
     post: { a: 0xf0a24a, b: 0x2a3550 }, pylon: 0x5d6675,
 
-    terrain: {
-      stops: [
-        [0.00, [.56, .62, .72]], [0.22, [.56, .62, .72]],
-        [0.32, [.70, .75, .84]], [0.58, [.70, .75, .84]],
-        [0.68, [.80, .84, .90]], [1.00, [.80, .84, .90]],
-      ],
-      rock: [.26, .28, .33], relief: 1.15, tint: 0.20,
+    terrain: { rock: [.26, .28, .33], relief: 1.15, tint: 0.20 },
+    zones: {
+      snow:    { ground: [.80, .84, .90], trees: 0.05, rocks: 0.9, blds: 0.0 },
+      forest:  { ground: [.58, .64, .72], trees: 1.20, rocks: 0.5, blds: 0.0 },
+      rock:    { ground: [.50, .54, .62], trees: 0.15, rocks: 2.2, blds: 0.0 },
+      farm:    { ground: [.68, .72, .80], trees: 0.30, rocks: 0.4, blds: 0.4 },
+      village: { ground: [.62, .66, .74], trees: 0.15, rocks: 0.2, blds: 1.8 },
+      shore:   { ground: [.56, .62, .72], trees: 0.05, rocks: 0.8, blds: 0.8 },
     },
+    bld: [0x9aa6b4, 0x84909e, 0x6f7a88, 0x5b6674], roof: 0x3d4652,
     scatter: {
       trees: 430, rocks: 300, clump: 0.48, altHi: 0.66, altLo: 0.06,
       coneA: 0x2c4038, coneB: 0x36473c, trunk: 0x3a3630, rockCol: 0x545c68,

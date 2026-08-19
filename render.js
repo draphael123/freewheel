@@ -36,7 +36,7 @@ export function setRes(scale) {
 let renderer, scene, camera, cart, rider, blob, reticle, tether, sun, hemi, fog;
 let sky, dust, dustP = [], shakeT = 0;
 let courseRoot, TH = THEME.get('alpine');
-let rivalCarts = [];
+let rivalCarts = [], tunnelRoofs = [];
 const hex = (c) => new THREE.Color(c[0], c[1], c[2]);
 let roadMesh, roadPlain, roadTint, pylons, postGroup, treeGroup;
 let camYaw = 0, camYawTarget = 0, camSize = 46;
@@ -238,6 +238,7 @@ function buildTerrain() {
 
   const heights = new Float32Array((nx + 1) * (nz + 1));
   const bandY  = new Float32Array((nx + 1) * (nz + 1));   // road height, not ground height
+  const nearest = new Int32Array((nx + 1) * (nz + 1));   // which stretch of road owns this cell
   for (let j = 0; j <= nz; j++) {
     for (let i = 0; i <= nx; i++) {
       const x = minX + i * CELL, z = minZ + j * CELL;
@@ -245,10 +246,11 @@ function buildTerrain() {
          mountainside the road was cut into: it follows the descent but not the
          dips, crests or the step, so the road deviates from it and the pylons
          have something to stand on. */
-      let wsum = 0, ysum = 0, near = 1e9, nearY = 0;
-      for (const p of coarse) {
+      let wsum = 0, ysum = 0, near = 1e9, nearY = 0, nearI = 0;
+      for (let ci = 0; ci < coarse.length; ci++) {
+        const p = coarse[ci];
         const d2 = (p.x - x) * (p.x - x) + (p.z - z) * (p.z - z);
-        if (d2 < near) { near = d2; nearY = p.y; }
+        if (d2 < near) { near = d2; nearY = p.y; nearI = ci; }
         const w = Math.exp(-d2 / SIG2);
         wsum += w; ysum += w * p.y;
       }
@@ -281,25 +283,30 @@ function buildTerrain() {
          billiard-table green where a mountainside should be. Rise fast, stop
          early, let the mountain take over. */
       const cut = nearY - 2.2 + Math.max(0, d - (T.HALF_W + 2.0)) * 1.15;
-      heights[j * (nx + 1) + i] = Math.min(smooth, cut);
+      /* A bridge is a hole, not a cut: refuse to carve a channel under the road
+         and drop the ground away instead, so THE SPAN reads as a span. */
+      heights[j * (nx + 1) + i] = coarse[nearI].bridge
+        ? Math.min(smooth, nearY - 30 - Math.min(d * 0.5, 26))
+        : Math.min(smooth, cut);
       bandY[j * (nx + 1) + i] = nearY;
+      nearest[j * (nx + 1) + i] = nearI;
     }
   }
 
-  /* Altitude ramp with tight transitions: distinct bands, but not aliased.
-     Rock is painted by SLOPE rather than height, which is what stops a
-     low-poly hillside reading as felt. */
-  const STOPS = TH.terrain.stops;
-  const ramp = (a) => {
-    for (let k = 0; k < STOPS.length - 1; k++) {
-      const [p0, c0] = STOPS[k], [p1, c1] = STOPS[k + 1];
-      if (a <= p1 || k === STOPS.length - 2) {
-        const t = p1 === p0 ? 0 : Math.max(0, Math.min(1, (a - p0) / (p1 - p0)));
-        return [0, 1, 2].map((q) => c0[q] + (c1[q] - c0[q]) * t);
-      }
+  /* Ground colour comes from the ZONE the nearest stretch of road is in,
+     smoothed over about forty metres so one place becomes the next rather than
+     switching. Colouring by altitude drifted with the terrain instead of with
+     the course, which is how the player ended up permanently inside the band
+     BELOW the one they were driving through. */
+  const zoneCol = coarse.map((_, i) => {
+    let r = 0, g = 0, b = 0, n = 0;
+    for (let k = Math.max(0, i - 10); k <= Math.min(coarse.length - 1, i + 10); k++) {
+      const Z = TH.zones[coarse[k].zone] || TH.zones.forest;
+      r += Z.ground[0]; g += Z.ground[1]; b += Z.ground[2]; n++;
     }
-    return STOPS[0][1];
-  };
+    return [r / n, g / n, b / n];
+  });
+
   const ROCK = TH.terrain.rock;
 
   for (let j = 0; j <= nz; j++) {
@@ -314,14 +321,7 @@ function buildTerrain() {
       const dz = (gi(i, j + 1) - gi(i, j - 1)) / (2 * CELL);
       const slope = Math.hypot(dx, dz);
 
-      /* Band by the height of the ROAD nearby, not by this vertex's own
-         height. The hillside falls away 20-plus metres from the verge, so
-         colouring by ground height put the player permanently inside the band
-         BELOW the one they were driving through — green road, ochre world.
-         Banding by the road makes the palette track progress down the
-         mountain, which is the entire point of having bands. */
-      const a = (bandY[j * (nx + 1) + i] - T.BOT_Y) / (T.TOP_Y - T.BOT_Y);
-      const base = ramp(a);
+      const base = zoneCol[nearest[j * (nx + 1) + i]];
       const t = Math.max(0, Math.min(1, (slope - 0.62) / 0.55));
       const rk = t * t * (3 - 2 * t);
       /* Two scales of variation: fine per-vertex grain, plus a broad drift so
@@ -471,7 +471,8 @@ function buildProps(tr) {
     const alt = (T.surfaceAt(s, 0).y - T.BOT_Y) / (T.TOP_Y - T.BOT_Y);
     const sl = slopeAt(c.x, c.z);
 
-    if (sl > 0.72 && rk < NR) {                       // scree and outcrops
+    const Z = TH.zones[T.zoneAt(s)] || TH.zones.forest;
+    if (sl > 0.72 && rk < NR && Math.random() < Z.rocks * 0.55) {  // scree and outcrops
       const sc = 0.6 + Math.random() * 2.3;
       mtx.compose(new THREE.Vector3(c.x, gy + sc * 0.35, c.z),
         q.setFromEuler(new THREE.Euler(Math.random(), Math.random() * 6.28, Math.random())),
@@ -481,7 +482,9 @@ function buildProps(tr) {
       continue;
     }
     if (a + b >= N) continue;
-    if (alt > SC.altHi || alt < SC.altLo) continue;
+    /* Zone decides what grows here. An altitude gate could only ever say
+       "high" or "low"; a zone can say pinewood, and then say village. */
+    if (Math.random() > Z.trees * 0.62) continue;
     if (vn(c.x / 58, c.z / 58) < SC.clump) continue;  // the clearings
     const sc = 0.55 + Math.random() * 0.95;
     const tall = Math.random() < 0.72;
@@ -495,6 +498,125 @@ function buildProps(tr) {
   ci.count = a; ci2.count = b; ti.count = a + b; ri.count = rk;
   treeGroup.add(ci, ci2, ti, ri);
   courseRoot.add(treeGroup);
+
+  buildBuildings(tr, mtx, q);
+  buildTunnels();
+}
+
+/* Houses, close to the road, in the zones that have any. They are the other
+   half of the proximity problem the gantries and bunting started on: nothing
+   sells speed like a wall two metres off your shoulder. */
+function buildBuildings(tr, mtx, q) {
+  const wallG = new THREE.BoxGeometry(1, 1, 1);
+  const roofG = new THREE.ConeGeometry(0.78, 0.5, 4);
+  const cols = TH.bld;
+  const CAP = 220;
+  const walls = cols.map((c) => new THREE.InstancedMesh(wallG,
+    new THREE.MeshLambertMaterial({ color: c }), CAP));
+  const roofs = new THREE.InstancedMesh(roofG,
+    new THREE.MeshLambertMaterial({ color: TH.roof, flatShading: true }), CAP * cols.length);
+  walls.forEach((w) => { w.castShadow = w.receiveShadow = true; });
+  roofs.castShadow = true;
+  const n = cols.map(() => 0);
+  let nr = 0;
+
+  /* WALK the building zones rather than sampling the whole course at random.
+     Uniform sampling put 394 houses across 2.4 km, which is six within sight of
+     the village street and reads as open ground with the odd shed. A street is
+     a density, so it has to be authored as one. */
+  for (let s0 = 8; s0 < T.LENGTH - 8; s0 += 5) {
+    const Z = TH.zones[T.zoneAt(s0)] || TH.zones.forest;
+    if (!Z.blds || T.tunnelAt(s0) || T.bridgeAt(s0)) continue;
+    const { nrm, tan } = basisAt(s0);
+    q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+      new THREE.Vector3().crossVectors(nrm, tan).normalize(), nrm,
+      tan.clone().normalize()));
+    for (const side of [-1, 1]) {
+      if (Math.random() > Z.blds * 0.5) continue;
+      const off = T.halfWAt(s0) + SHOULDER + 1.2 + Math.random() * 7;
+      const c = T.surfaceAt(s0, side * off);
+      const gy = terrainY(tr, c.x, c.z);
+      const k = Math.floor(Math.random() * cols.length);
+      if (n[k] >= CAP) continue;
+      const w = 4.2 + Math.random() * 4.0;
+      const d = 4.2 + Math.random() * 4.0;
+      const h = 4.0 + Math.random() * 6.0;
+      /* Stand them UP from the slope. Sitting every house on raw terrain put
+         the village ten metres below an embanked road, where the embankment
+         hid it — and made-up ground against the street is how hill villages
+         are actually built. */
+      const base = new THREE.Vector3(c.x, Math.max(gy, c.y - 2.5), c.z);
+      mtx.compose(base.clone().addScaledVector(nrm, h / 2), q, new THREE.Vector3(w, h, d));
+      walls[k].setMatrixAt(n[k]++, mtx);
+      /* ConeGeometry's radius is 0.78, so scaling by w*1.5 gave a roof 2.3x
+         the width of the house it sat on and the village rendered as a solid
+         raft of red diamonds. Aim for a modest overhang instead. */
+      mtx.compose(base.clone().addScaledVector(nrm, h + w * 0.225), q,
+                  new THREE.Vector3(w * 0.95, w * 0.90, d * 0.95));
+      roofs.setMatrixAt(nr++, mtx);
+    }
+  }
+  walls.forEach((w, k) => { w.count = n[k]; courseRoot.add(w); });
+  roofs.count = nr;
+  courseRoot.add(roofs);
+}
+
+/* A roof over the road. The only place on the course where the sky goes away,
+   which is exactly why it is worth the forty lines. */
+function buildTunnels() {
+  tunnelRoofs = [];
+  const roofs = tunnelRoofs;
+  const dark = new THREE.MeshLambertMaterial({ color: 0x2a2724, side: THREE.DoubleSide });
+  const H = 6.2;
+  let run = null;
+  const flush = () => {
+    if (!run || run.b - run.a < 6) { run = null; return; }
+    const pos = [], idx = [], ridx = [];
+    let v = 0;
+    for (let s0 = run.a; s0 <= run.b; s0 += 3) {
+      const w = T.halfWAt(s0) + SHOULDER;
+      const { nrm, right } = basisAt(s0);
+      const c = v3(T.surfaceAt(s0, 0));
+      const L = c.clone().addScaledVector(right, -w);
+      const R = c.clone().addScaledVector(right, w);
+      const LT = L.clone().addScaledVector(nrm, H);
+      const RT = R.clone().addScaledVector(nrm, H);
+      for (const p of [L, LT, RT, R]) pos.push(p.x, p.y, p.z);
+      if (v > 0) {
+        const q0 = v - 4;
+        for (const [i0, i1] of [[0, 1], [2, 3]]) {          // the two side walls
+          idx.push(q0 + i0, q0 + i1, v + i0, q0 + i1, v + i1, v + i0);
+        }
+        ridx.push(q0 + 1, q0 + 2, v + 1, q0 + 2, v + 2, v + 1);   // the roof
+      }
+      v += 4;
+    }
+    const mk = (indices, mat) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos.slice(), 3));
+      g.setIndex(indices);
+      g.computeVertexNormals();
+      const m = new THREE.Mesh(g, mat);
+      m.castShadow = true; m.receiveShadow = true;
+      courseRoot.add(m);
+      return m;
+    };
+    mk(idx, dark);
+    /* The roof is its own mesh so it can get out of the way. On a camera fixed
+       forty degrees above the road, a tunnel ceiling hides the road, the cart
+       and every rival in it — the place is distinct and completely unplayable.
+       It fades out while you are inside and closes again behind you. */
+    const roof = mk(ridx, dark.clone());
+    roof.material.transparent = true;
+    roof.castShadow = false;
+    roofs.push({ mesh: roof, a: run.a, b: run.b });
+    run = null;
+  };
+  for (let s0 = 0; s0 < T.LENGTH; s0 += 2) {
+    if (T.tunnelAt(s0)) { if (!run) run = { a: s0, b: s0 }; else run.b = s0; }
+    else flush();
+  }
+  flush();
 }
 
 
@@ -1100,6 +1222,15 @@ export function frame(S, dt) {
   /* The dome rides with the view: an ortho camera has no perspective to sell
      distance, so a sky that stayed put would slide across the frame. */
   sky.position.copy(tgt);
+
+  /* Open the roof while the cart is under it, with a margin so it is already
+     clear by the time you arrive. */
+  for (const r of tunnelRoofs) {
+    const inside = S.s > r.a - 26 && S.s < r.b + 14;
+    const want = inside ? 0.0 : 1.0;
+    r.mesh.material.opacity += (want - r.mesh.material.opacity) * Math.min(1, dt * 5);
+    r.mesh.visible = r.mesh.material.opacity > 0.02;
+  }
 
   dust.visible = opts.dust;
   if (opts.dust) {

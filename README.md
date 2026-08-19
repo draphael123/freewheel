@@ -57,6 +57,23 @@ their line is, so a slow rival is slow for a reason you can watch.
 
 Measured over a full field: **11.4 s spread, 6 lead changes**, everyone finishes.
 
+## Zones
+
+A course is a journey, not a list of corners. Every segment carries a `zone`,
+and the zone drives ground colour, what is scattered beside the road and where
+the buildings are — so the world changes under you at authored moments rather
+than drifting with altitude.
+
+**THE VALE** now runs 2380 m from the snowline to the sea:
+
+`THE GATE · THE CORNICE · STEEP DROP · THE PINEWOOD · THE LEAP · HAIRPIN L ·
+THE SPAN · THE ESSES · THE ADIT · THE TERRACES · THE SWEEP · THE PINCH ·
+THE VILLAGE · THE STEPS · HAIRPIN R · THE QUAY`
+
+Three of those are places rather than corners: **THE SPAN** refuses the terrain
+carve so the ground drops away and the road is a bridge, **THE ADIT** is a
+tunnel, and **THE VILLAGE** is a street with houses hard against both verges.
+
 ## The road furniture
 
 Sense of speed comes from **proximity**, and an open hillside has nothing near
@@ -139,6 +156,13 @@ Physics numbers came out of `FW.sim()`, not out of taste:
   that touched on the grid held each other at zero for the entire race, and the
   field report quietly averaged over the three that got away. Scale contact
   losses by speed, and make the harness name its non-finishers.
+- **A tunnel on a fixed iso camera is unplayable.** The roof hides the road,
+  the cart and every rival under it. The ceiling is its own mesh so it can fade
+  out while you are inside and close again behind you.
+- **Scatter density has to be authored, not sampled.** Placing buildings at
+  random s across the course put 394 houses over 2.4 km — six within sight of
+  the village street, which reads as open ground with the odd shed. A street is
+  a density: walk the zone instead.
 - **The handedness trap bites twice.** `{right, nrm, tan}` has determinant −1,
   so it is a reflection and `setFromRotationMatrix` returns nonsense. It put the
   cart broadside across the road the first time and rendered a 15 m gantry banner

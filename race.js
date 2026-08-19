@@ -49,10 +49,10 @@ export const tune = {
    difference in a race was traffic luck. A purely behavioural pecking order is
    just a random one wearing a nicer name. */
 export const RIVALS = [
-  { name: 'VESK',   color: 0x2f6f9e, skill: 0.94, pace: 1.02, line: -0.35, react: 0.10 },
-  { name: 'ORRIN',  color: 0xd9a13a, skill: 0.86, pace: 1.06, line:  0.40, react: 0.16 },
-  { name: 'HALLOW', color: 0x7a4f9c, skill: 0.79, pace: 1.11, line: -0.55, react: 0.22 },
-  { name: 'BRAKE',  color: 0x3f8f5c, skill: 0.71, pace: 1.17, line:  0.60, react: 0.30 },
+  { name: 'VESK',   color: 0x2f6f9e, skill: 0.94, pace: 1.07, line: -0.35, react: 0.10 },
+  { name: 'ORRIN',  color: 0xd9a13a, skill: 0.86, pace: 1.12, line:  0.40, react: 0.16 },
+  { name: 'HALLOW', color: 0x7a4f9c, skill: 0.79, pace: 1.18, line: -0.55, react: 0.22 },
+  { name: 'BRAKE',  color: 0x3f8f5c, skill: 0.71, pace: 1.25, line:  0.60, react: 0.30 },
 ];
 
 
