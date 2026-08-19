@@ -116,14 +116,18 @@ export function legalRoute(forks, want) {
 
 /* Called once a run is finished. `route` is what you drove; `rivalRoutes` is
    what the rest of the field drove. Degrades, then advances the season. */
-export function recordRun(forks, route, rivalRoutes, place) {
+export function recordRun(forks, route, rivalRoutes, place, load) {
   if (!st) return null;
+  /* The load is what breaks the road. An overload wears it nearly twice as
+     fast, which is the trade the whole season is built on: the pay is now and
+     the cost is a road you will want later. */
+  const wearMul = (load && load.wear) || 1;
   const closed = [];
   for (const f of forks) {
     const mine = route[f.id];
     if (mine && st.cond[f.id][mine] != null) {
       const before = st.cond[f.id][mine];
-      st.cond[f.id][mine] = Math.max(0, before - WEAR_YOU);
+      st.cond[f.id][mine] = Math.max(0, before - WEAR_YOU * wearMul);
       if (before > CLOSED_AT && st.cond[f.id][mine] <= CLOSED_AT) {
         closed.push({ fork: f, branch: f.branches.find((b) => b.id === mine), by: 'you' });
       }
@@ -140,8 +144,10 @@ export function recordRun(forks, route, rivalRoutes, place) {
   }
   /* Championship points, so a season is a standing and not just a diary. */
   const PTS = [0, 10, 7, 5, 3, 2, 1];
-  st.points += PTS[place] || 0;
-  st.log.push({ run: st.run, place, route: { ...route } });
+  const scored = Math.round((PTS[place] || 0) * ((load && load.pay) || 1));
+  st.points += scored;
+  st.log.push({ run: st.run, place, scored, route: { ...route },
+                load: load ? load.id : 'std' });
   st.run += 1;
   st.done = st.run > RUNS || impassable(forks);
   save();

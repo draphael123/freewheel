@@ -185,6 +185,7 @@ function show(next) {
    run is one decision inside it. */
 let seasonCourse = null;
 let pickedRoute = {};
+let pickedLoad = SIM.loadById('std');
 let lastClosed = [];
 let rivalRoutes = [];
 
@@ -224,6 +225,23 @@ function drawRoute() {
     ? lastClosed.map((c) => `&mdash; ${c.branch.name} has gone`
         + `${c.by === 'you' ? ', under your load' : ''}.`).join('<br>')
     : '';
+
+  /* The load picker. Pay and wear are stated as plain multipliers because the
+     whole decision is "how much of the road am I willing to spend for this". */
+  el('rLoads').innerHTML = SIM.LOADS.map((l) => {
+    const on = pickedLoad.id === l.id;
+    return `<button class="opt${on ? ' on' : ''}" data-load="${l.id}">
+      <div class="on1">${l.name}</div>
+      <div class="on2">${l.note}</div>
+      <div class="cw">${l.pay.toFixed(1)}&times; pay &middot; ${l.wear.toFixed(2)}&times; wear</div>
+    </button>`;
+  }).join('');
+  el('rLoads').querySelectorAll('.opt').forEach((b) => {
+    b.addEventListener('click', () => {
+      pickedLoad = SIM.loadById(b.dataset.load);
+      drawRoute();
+    });
+  });
 
   el('rForks').innerHTML = forks.map((f) => {
     const opts = f.branches.map((b) => {
@@ -303,7 +321,11 @@ function startRun(courseId, route) {
   field = RACE.createField();
   R.setField(field.carts);
   S = field.you;
+  /* Only the player carries a load — the rivals are hauling their own problem
+     and modelling it would change nothing you can see. */
+  S.load = (seasonCourse && T.forksOf(courseId || T.ID).length) ? pickedLoad : null;
   countdown = 3.2;
+  steerNow = 0;
   lastCount = 9;
   lastPumpShown = 0;
   snap = { bale: 0, wall: 0, spin: 0, land: 0 };
@@ -391,13 +413,36 @@ addEventListener('keydown', (e) => {
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => keys.clear());
 
-function readInput() {
+/* Steering is ANALOGUE even though the keyboard is not.
+
+   This was the single biggest cause of "stiff rather than fluid": the raw key
+   was fed straight in as -1/0/+1, so every tap was an instantaneous full lock
+   and the tyres saturated on the first frame of every press — measured slip
+   spiked to 3.5 the moment you touched a key, which is a slide, not a turn.
+
+   Three different rates, because they are three different intentions:
+     attack  — pressing a direction. Quick, but not instant.
+     release — letting go. Faster, so the kart settles the moment you stop
+               asking, which is most of what makes a car feel obedient.
+     flip    — reversing direction. Fastest of all: a counter-steer has to bite
+               NOW or catching a slide is impossible. */
+const STEER_ATTACK = 7.5, STEER_RELEASE = 13, STEER_FLIP = 20;
+let steerNow = 0;
+export const resetSteer = () => { steerNow = 0; };
+
+function readInput(dt) {
   S.input.throttle = keys.has('w') || keys.has('arrowup');
   S.input.brake = keys.has('s') || keys.has('arrowdown');
   S.input.hand = keys.has(' ');
   S.input.boost = keys.has('shift');
-  S.input.steer = (keys.has('d') || keys.has('arrowright') ? 1 : 0)
-                - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+  const want = (keys.has('d') || keys.has('arrowright') ? 1 : 0)
+             - (keys.has('a') || keys.has('arrowleft') ? 1 : 0);
+  const rate = want === 0 ? STEER_RELEASE
+    : (steerNow !== 0 && Math.sign(want) !== Math.sign(steerNow)) ? STEER_FLIP
+    : STEER_ATTACK;
+  steerNow += (want - steerNow) * Math.min(1, (dt || 1 / 60) * rate);
+  if (Math.abs(steerNow) < 0.004) steerNow = 0;
+  S.input.steer = steerNow;
 }
 
 /* ------------------------------ elevation strip ---------------------------- */
@@ -536,7 +581,7 @@ function finish() {
      line you just drove is worse than it was, and may be gone. */
   const forks = T.forksOf(T.ID);
   if (seasonCourse && forks.length) {
-    const r = SEASON.recordRun(forks, { ...T.ROUTE }, rivalRoutes, place);
+    const r = SEASON.recordRun(forks, { ...T.ROUTE }, rivalRoutes, place, pickedLoad);
     lastClosed = r ? r.closed : [];
     const st = SEASON.state();
     el('dseason').textContent = st.done
@@ -596,7 +641,7 @@ function frameBody(now) {
     } else {
       el('count').textContent = '';
       acc += dt;
-      readInput();
+      readInput(dt);
       let guard = 0;
       while (acc >= HZ && guard++ < 60) { RACE.step(field, HZ, S.input); acc -= HZ; }
     }

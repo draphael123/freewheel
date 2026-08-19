@@ -489,6 +489,14 @@ export const hallAt    = (s) => at(s).hall;
 
 /* Hazards within reach of a cart. A linear scan is fine — a course has a dozen
    of these, and an index would cost more to keep honest than it saves. */
+/* Where the BARRIER actually is. The painted road is halfW wide; the guard rail
+   is built 1.16 m beyond that, on the shoulder. The physics used to stop you at
+   halfW, so you were held by nothing a metre short of the rail you could see —
+   which read as an invisible wall, and meant the roadside posts out on the
+   shoulder could never be touched. One number, two complaints. */
+export const VERGE = 1.16;
+export const wallAt = (s) => lerpField(s, 'halfW') + VERGE;
+
 export const HAZARD_R = 1.9;
 export function hazardsNear(s, span = 4) {
   const out = [];

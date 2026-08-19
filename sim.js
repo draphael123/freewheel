@@ -40,7 +40,26 @@ export const tune = {
   /* The friction circle. mu is how much lateral acceleration the tyres can
      supply before the cart stops turning and starts sliding. */
   mu: 1.05,
-  steerForce: 10.5,       // lateral accel a full lock asks for
+  /* Steering asks for a lateral VELOCITY, not a lateral acceleration.
+
+     The old model applied acceleration directly, which makes the response a
+     double integrator — stick to accel to velocity to position — and Daniel's
+     word for that was "stiff". It is physically honest and it feels like
+     shoving a crate sideways, because nothing happens for the first tenth of a
+     second and then it keeps happening after you let go.
+
+     Asking for a target lateral velocity and driving the error makes it
+     first-order: it responds now and it stops when you stop. Crucially the
+     result still goes through the SAME friction circle, so the grip limit, the
+     slide and the drift all survive intact — this changes the feel of the
+     input, not the physics of the tyre. */
+  /* 8.6 m/s at 26 m/s road speed is an 18-degree slip angle — full lock was
+     asking for a drift every time you held a key. 6.6 is about 14 degrees:
+     still a real slide when you commit to it, but partial input now stays
+     inside the grip circle, which is where a corner should live. */
+  steerVel: 6.6,          // lateral velocity a full lock asks for, m/s
+  steerGain: 3.4,         // how hard the tyres chase that target
+  steerForce: 10.5,       // (legacy) lateral accel a full lock asks for
   slipDamp: 2.1,          /* how hard the tyres fight a slide. At 3.2 a drift
                              collapsed almost as soon as it started, so there was
                              nothing to hold and nothing to feel. */
@@ -80,6 +99,22 @@ export const tune = {
   startSpeed: 2.0,
 };
 
+/* mass is only used for wear and pay; pull/stop/grip are what you feel. */
+export const NEUTRAL_LOAD = { id: 'std', name: 'standard', pull: 1, stop: 1, grip: 1, wear: 1, pay: 1 };
+export const LOADS = [
+  { id: 'light', name: 'a light load', pull: 1.10, stop: 1.10, grip: 1.05,
+    wear: 0.55, pay: 0.7, note: 'quick and kind to the road, and it pays like it' },
+  { id: 'std', name: 'a full load', pull: 1, stop: 1, grip: 1,
+    wear: 1, pay: 1, note: 'what the road was built for' },
+  /* 1.6x pay made always-overloading strictly best: 96 points in six runs
+     against 80 for eight standard ones. At 1.35 the pure strategies come out
+     level (81 vs 80), so the season is won by MIXING — overload while the road
+     is good, go light to keep the last one open. */
+  { id: 'heavy', name: 'an overload', pull: 0.86, stop: 0.82, grip: 0.90,
+    wear: 1.75, pay: 1.35, note: 'pays half again, and it will break the road under you' },
+];
+export const loadById = (id) => LOADS.find((l) => l.id === id) || NEUTRAL_LOAD;
+
 export function create() {
   return {
     s: 0, u: 0, v: tune.startSpeed, vy: 0,
@@ -108,7 +143,13 @@ export function step(S, dt) {
   S.t += dt;
 
   const pitch = T.pitchAt(S.s), kv = T.kvAt(S.s), kh = T.khAt(S.s);
-  const grip = T.gripAt(S.s);
+  /* The LOAD you chose on the route board. It is the whole reason the premise
+     is a haul rather than a race: a heavy load pays more, wears the road far
+     faster, and is genuinely worse to drive. Without it "take the load down"
+     was a button that did nothing. Defaults to a neutral load so headless sims
+     and forkless courses are unaffected. */
+  const L = S.load || NEUTRAL_LOAD;
+  const grip = T.gripAt(S.s) * L.grip;
   const In = S.input;
 
   /* Rider posture, purely cosmetic now: they duck at speed. */
@@ -151,10 +192,10 @@ export function step(S, dt) {
       let a = -K.G * Math.sin(pitch);            // gravity along the road
 
       if (S.spun > 0) S.spun -= dt;              // no drive while spinning
-      else if (In.throttle) a += K.engine * Math.max(0, 1 - S.v / K.engineV);
+      else if (In.throttle) a += K.engine * L.pull * Math.max(0, 1 - S.v / K.engineV);
 
       if (In.brake) {
-        const b = K.brake * grip;
+        const b = K.brake * grip * L.stop;
         a -= b; S.brakeTotal += b * dt;
       }
       if (In.boost && S.charge > 0.02 && S.spun <= 0) {
@@ -191,8 +232,11 @@ export function step(S, dt) {
     const limit = K.mu * K.G * grip
                 * (In.hand ? K.handbrakeGrip : 1)
                 * (S.spun > 0 ? 0.25 : 1);
-    const desired = In.steer * K.steerForce * Math.min(1, S.v / 6)
-                  - S.vy * K.slipDamp - push;
+    /* One P-controller on lateral velocity replaces the old steer term AND the
+       slip damping: with a target of zero this reduces to exactly the old
+       damping, so straight-line behaviour is unchanged. */
+    const vyWant = In.steer * K.steerVel * Math.min(1, S.v / 7);
+    const desired = (vyWant - S.vy) * K.steerGain - push;
     S.slip = Math.abs(desired) / limit;
     const aTyre = Math.max(-limit, Math.min(limit, desired));
     S.vy += (aTyre + push) * dt;
@@ -230,13 +274,18 @@ export function step(S, dt) {
   }
 
   /* ---- the barrier ------------------------------------------------------- */
-  const wall = T.halfWAt(S.s);
+  const wall = T.wallAt(S.s);
   const wasOn = S.onWall;
-  S.onWall = Math.abs(S.u) > wall;
+  /* Sticky by a margin, and this matters more than it looks. Clamping sets u to
+     EXACTLY the wall, so `|u| > wall` is false on the very next frame: onWall
+     flickered off, the load-carrying rule below never got a chance to fire, and
+     the corner shoved you straight back into it. The barrier fix was correct
+     and did almost nothing until this. */
+  S.onWall = Math.abs(S.u) > wall - 0.08;
   if (S.onWall) {
     const into = Math.abs(S.vy);
     const sgn = Math.sign(S.u);
-    S.u = sgn * wall;
+    S.u = sgn * Math.min(Math.abs(S.u), wall);
     if (!wasOn) { S.v = Math.max(0, S.v - K.wallBite * Math.min(into, 12)); S.wallHits++; }
     /* Bounce OFF. A brush gives you wallKick, a real hit gives you a share of
        what you arrived with — either way you leave the barrier this frame

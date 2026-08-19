@@ -1112,7 +1112,11 @@ function buildBarriers() {
     for (let s0 = 2; s0 <= T.LENGTH - 2; s0 += 2.5) {
       if (T.tunnelAt(s0)) { first = true; continue; }
       const { right, nrm } = basisAt(s0);
-      const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + SHOULDER * 0.78)));
+      /* Centre the parapet so its INNER face lands exactly on the physics
+         barrier. Drawn on the shoulder while the wall sat at halfW, it left a
+         1.16 m strip of road you were stopped from using by nothing you could
+         see. track.VERGE is now the single source of truth for both. */
+      const c = v3(T.surfaceAt(s0, side * (T.halfWAt(s0) + T.VERGE + TH_ * 0.5)));
       const out = right.clone().multiplyScalar(side * TH_ * 0.5);
       /* Six vertices per ring: inner and outer, at foot and cap, plus the two
          cap corners again so the top can be shaded separately. */
