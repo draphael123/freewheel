@@ -130,6 +130,8 @@ export function create() {
     N: 1,                   // load in g, for the airborne test
     charge: 0,              // seconds of boost banked
     slip: 0,                // >1 means the tyres have let go
+    /* Which branch of each fork you actually took, decided while driving. */
+    route: {}, fork: null, branch: null,
     drift: 0,               // signed sideways speed, for the HUD and the yaw
     spun: 0,                // seconds left of a spin
     brakeTotal: 0, airTotal: 0, cleanLandings: 0, landQuality: 0,
@@ -155,7 +157,30 @@ export function step(S, dt) {
      was a button that did nothing. Defaults to a neutral load so headless sims
      and forkless courses are unaffected. */
   const L = S.load || NEUTRAL_LOAD;
-  const grip = T.gripAt(S.s) * L.grip;
+  /* ---- which road am I on -------------------------------------------------
+     The centreline is the spine; inside a fork the road you are actually on is
+     a corridor offset from it. The branch is chosen ONCE, at the mouth, by
+     which side of the spine you are on — which is exactly "swerve left or
+     right" — and then held until the fork closes, so you cannot cross the
+     median halfway down. A branch the season has closed is not on offer. */
+  const fk = T.forkAt(S.s);
+  if (!fk) { S.fork = null; S.branch = null; }
+  else if (S.fork !== fk.id) {
+    const open = T.openOf(fk);
+    let pick = open[0] || fk.branches[0];
+    if (open.length > 1) {
+      /* Nearest by side. u is signed lateral offset; a branch has side -1/+1. */
+      pick = open.reduce((best, b) =>
+        Math.sign(b.side) === Math.sign(S.u || (open[0].side))
+          ? b : best, open[0]);
+      const want = open.find((b) => Math.sign(b.side) === Math.sign(S.u));
+      if (want) pick = want;
+    }
+    S.fork = fk.id; S.branch = pick.id; S.route[fk.id] = pick.id;
+  }
+  const inFork = !!(fk && S.branch);
+  const centre = inFork ? T.branchOffsetAt(fk.id, S.branch, S.s) : 0;
+  const grip = (inFork ? T.branchGripAt(fk.id, S.branch, S.s) : T.gripAt(S.s)) * L.grip;
   const In = S.input;
 
   /* Rider posture, purely cosmetic now: they duck at speed. */
@@ -218,7 +243,10 @@ export function step(S, dt) {
       a -= K.slipDrag * Math.abs(S.vy);          // sliding costs you speed
 
       S.v = Math.max(0, S.v + a * dt);
-      S.s += S.v * dt;
+      /* A branch that bulges is genuinely further to drive. Dividing forward
+         progress by the local stretch is what the old bake-and-resample bought,
+         applied at runtime so the choice can be made while driving. */
+      S.s += S.v * dt / (inFork ? T.branchStretchAt(fk.id, S.branch, S.s) : 1);
     }
   }
 
@@ -228,13 +256,19 @@ export function step(S, dt) {
      BEFORE any steering. Ask for more than mu*g and they let go — that is the
      grip limit, and it is the only reason a braking point is a decision. */
   if (!S.air) {
-    let push = S.v * S.v * kh - K.G * Math.sin(T.bankAt(S.s));
+    const bankNow = inFork
+      ? T.branchBankAt(fk.id, S.branch, S.s) * Math.sign(T.khAt(S.s) || 1)
+      : T.bankAt(S.s);
+    let push = S.v * S.v * kh - K.G * Math.sin(bankNow);
     /* A barrier carries load. While you are against it, the wall takes the
        cornering force instead of your tyres — so steering away is unopposed
        and you peel off at once. Without this the centrifugal term pinned you
        to the wall for the whole length of the corner no matter what you did
        with the stick, which is exactly what "stuck on a wall" felt like. */
-    if (S.onWall && S.u !== 0 && Math.sign(push) === Math.sign(S.u)) push = 0;
+    /* Offset from the CENTRE OF THE ROAD YOU ARE ON, recomputed here because
+       the barrier block below runs later in the step and u moves in between. */
+    const relHere = S.u - centre;
+    if (S.onWall && relHere !== 0 && Math.sign(push) === Math.sign(relHere)) push = 0;
     const limit = K.mu * K.G * grip
                 * (In.hand ? K.handbrakeGrip : 1)
                 * (S.spun > 0 ? 0.25 : 1);
@@ -271,6 +305,7 @@ export function step(S, dt) {
   /* ---- bales ------------------------------------------------------------- */
   if (!S.air && S.s - S.lastBaleS > 8) {
     for (const h of T.hazardsNear(S.s, 2.6)) {
+      if (T.inFork(h.s)) continue;             // not drawn there, so not solid there
       if (Math.abs(h.u - S.u) < T.HAZARD_R + 0.9) {
         S.v = Math.max(0, S.v * (1 - K.baleLoss));
         S.vy += Math.sign(S.u - h.u || 1) * K.baleShove;
@@ -281,18 +316,21 @@ export function step(S, dt) {
   }
 
   /* ---- the barrier ------------------------------------------------------- */
-  const wall = T.wallAt(S.s);
+  /* The barrier follows the road you are on, not the spine. */
+  const wall = (inFork ? (T.branchWidthAt(fk.id, S.branch, S.s) + T.VERGE)
+                       : T.wallAt(S.s));
+  const rel = S.u - centre;
   const wasOn = S.onWall;
   /* Sticky by a margin, and this matters more than it looks. Clamping sets u to
      EXACTLY the wall, so `|u| > wall` is false on the very next frame: onWall
      flickered off, the load-carrying rule below never got a chance to fire, and
      the corner shoved you straight back into it. The barrier fix was correct
      and did almost nothing until this. */
-  S.onWall = Math.abs(S.u) > wall - 0.08;
+  S.onWall = Math.abs(rel) > wall - 0.08;
   if (S.onWall) {
     const into = Math.abs(S.vy);
-    const sgn = Math.sign(S.u);
-    S.u = sgn * Math.min(Math.abs(S.u), wall);
+    const sgn = Math.sign(rel) || 1;
+    S.u = centre + sgn * Math.min(Math.abs(rel), wall);
     if (!wasOn) { S.v = Math.max(0, S.v - K.wallBite * Math.min(into, 12)); S.wallHits++; }
     /* Bounce OFF. A brush gives you wallKick, a real hit gives you a share of
        what you arrived with — either way you leave the barrier this frame

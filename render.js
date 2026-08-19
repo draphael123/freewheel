@@ -166,7 +166,17 @@ function buildRoad(tr) {
     const { right, nrm } = basisAt(s);
     const grade = Math.sin(T.pitchAt(s));
 
-    const W = T.halfWAt(s) + SHOULDER;          // the road pinches; so does the slab
+    /* Inside a fork the spine is the gap BETWEEN two roads, so the slab pinches
+       away to nothing rather than laying a third road down the middle. Ramped
+       on the same bump the branches use, so the main road tapers into the split
+       instead of ending at a cliff. */
+    let forkFade = 1;
+    const fk = T.forkAt(s);
+    if (fk) {
+      const a = (s - fk.from) / (fk.to - fk.from);
+      forkFade = Math.max(0, 1 - Math.sin(Math.PI * Math.min(1, Math.max(0, a))) * 1.35);
+    }
+    const W = (T.halfWAt(s) + SHOULDER) * forkFade;   // the road pinches; so does the slab
     const l = c.clone().addScaledVector(right, -W);
     const r = c.clone().addScaledVector(right, W);
     /* The side walls run DOWN TO THE GROUND, not a fixed slab thickness. This
@@ -732,7 +742,7 @@ function buildBuildings(tr, mtx, q) {
   const nextFree = { '-1': -99, '1': -99 };
   for (let s0 = 8; s0 < T.LENGTH - 8; s0 += 2.5) {
     const Z = TH.zones[T.zoneAt(s0)] || TH.zones.forest;
-    if (!Z.blds || T.tunnelAt(s0) || T.bridgeAt(s0)) continue;
+    if (!Z.blds || T.tunnelAt(s0) || T.bridgeAt(s0) || T.inFork(s0)) continue;
     const { nrm, tan, right } = basisAt(s0);
     const nrm0 = nrm, tan0 = tan, right0 = right;
     q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
@@ -903,7 +913,7 @@ function buildCloudDeck() {
         transparent: true, opacity: layer ? 0.55 : 0.82,
         depthWrite: false, side: THREE.FrontSide, fog: true,
       }));
-      m.position.set(c.x, c.y - 7 - layer * 9, c.z);
+      m.position.set(c.x, c.y - 17 - layer * 12, c.z);
       m.renderOrder = 1 + layer;
       courseRoot.add(m);
       cloudDecks.push({ mesh: m, drift: (layer ? 1 : -1) * (1.4 + layer * 0.8) });
@@ -1186,7 +1196,7 @@ function buildBarriers() {
   for (const side of [-1, 1]) {
     let first = true, sincePost = 99;
     for (let s0 = 2; s0 <= T.LENGTH - 2; s0 += 2.5) {
-      if (T.tunnelAt(s0)) { first = true; continue; }
+      if (T.tunnelAt(s0) || T.inFork(s0)) { first = true; continue; }
       const { right, nrm } = basisAt(s0);
       /* Centre the parapet so its INNER face lands exactly on the physics
          barrier. Drawn on the shoulder while the wall sat at halfW, it left a
@@ -1281,7 +1291,10 @@ function buildFurniture(tr) {
   const baleM = new THREE.MeshLambertMaterial({ color: 0xd8c48a });
   const bales = new THREE.InstancedMesh(baleG, baleM, Math.max(1, T.HAZARDS.length));
   bales.castShadow = bales.receiveShadow = true;
+  /* Belt and braces: even if a course authors one inside a fork, do not draw it
+     hanging in the median. */
   T.HAZARDS.forEach((h, i) => {
+    if (T.inFork(h.s)) return;
     const c = v3(T.surfaceAt(h.s, h.u));
     const { nrm, tan } = basisAt(h.s);
     q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
@@ -1297,6 +1310,7 @@ function buildFurniture(tr) {
     color: TH.post.b, side: THREE.DoubleSide,
   });
   for (let s0 = 120; s0 < T.LENGTH - 60; s0 += 190) {
+    if (T.inFork(s0)) continue;                // a gantry spans a road, not a gap
     const w = T.halfWAt(s0) + SHOULDER;
     const { nrm, right, tan } = basisAt(s0);
     const c = v3(T.surfaceAt(s0, 0));
@@ -1416,7 +1430,7 @@ function buildFurniture(tr) {
   };
 
   for (let s0 = 20; s0 < T.LENGTH - POLE_GAP - 20; s0 += POLE_GAP) {
-    if (T.tunnelAt(s0)) continue;
+    if (T.tunnelAt(s0) || T.inFork(s0)) continue;
     for (const side of [-1, 1]) {
       const b = basisAt(s0);
       q.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
@@ -1584,7 +1598,7 @@ function buildRoadside(tr) {
     return q;
   };
   const buildable = (s0) =>
-    !T.tunnelAt(s0) && !T.bridgeAt(s0) && !T.skyroadAt(s0);
+    !T.tunnelAt(s0) && !T.bridgeAt(s0) && !T.skyroadAt(s0) && !T.inFork(s0);
 
   /* Deterministic jitter. Math.random() here would reshuffle the whole roadside
      on every rebuild, and the course is rebuilt whenever the route changes. */
@@ -1714,24 +1728,30 @@ function buildRoadside(tr) {
    has to be visible from the seat, not just true in a save file.
 
    `open` here means open in the season, not chosen this run. */
-function buildGhostRoads(closedSet) {
+function buildBranchRoads(closedSet) {
   if (!T.FORKS || !T.FORKS.length) return;
   /* These are sRGB material colours; the real road is painted with LINEAR
      vertex colours around 0.11. 0x2a2724 is linear ~0.02, so the first version
      drew the road-not-taken as a black void beside you rather than as a road.
      0x4e4841 lands just under the tarmac once tone mapped. */
-  const deck = new THREE.MeshLambertMaterial({ color: 0x4e4841 });
+  /* Open branches get the road's own palette so neither reads as the "wrong"
+     one — you are choosing between two roads, not between a road and a ghost.
+     A closed branch keeps the dead grey. */
+  const deck = new THREE.MeshLambertMaterial({
+    color: new THREE.Color(TH.road.top[0], TH.road.top[1], TH.road.top[2]),
+    map: grainTexture() });
   const shut = new THREE.MeshLambertMaterial({ color: 0x3d3730 });
   const chainM = new THREE.MeshLambertMaterial({ color: 0xb2452c });
 
   for (const f of T.FORKS) {
     for (const b of f.branches) {
-      if (T.ROUTE[f.id] === b.id) continue;             // that is the road we are on
+      /* Every branch is built now, not just the one you did not take: with a
+         live fork you can drive either, so both have to be real road. */
       const line = T.branchPolyline(f.id, b.id, 3);
       if (line.length < 2) continue;
       const isShut = closedSet && closedSet.has(f.id + '/' + b.id);
 
-      const pos = [], idx = [];
+      const pos = [], idx = [], uv = [];
       for (let i = 0; i < line.length; i++) {
         const p = line[i];
         const q0 = line[Math.max(0, i - 1)], q1 = line[Math.min(line.length - 1, i + 1)];
@@ -1739,9 +1759,12 @@ function buildGhostRoads(closedSet) {
         const hl = Math.hypot(hx, hz) || 1e-6;
         const rx = -hz / hl, rz = hx / hl;
         /* Sunk a little, and sunk MORE where a closed road has given way. */
-        const sag = isShut ? 0.35 + 1.9 * p.k : 0.28;
-        pos.push(p.x - rx * p.w, p.y - sag, p.z - rz * p.w,
-                 p.x + rx * p.w, p.y - sag, p.z + rz * p.w);
+        const sag = isShut ? 0.35 + 1.9 * p.k : 0.02;
+        const halfW = p.w + SHOULDER;
+        pos.push(p.x - rx * halfW, p.y - sag, p.z - rz * halfW,
+                 p.x + rx * halfW, p.y - sag, p.z + rz * halfW);
+        uv.push((p.x - rx * halfW) / 10, (p.z - rz * halfW) / 10,
+                (p.x + rx * halfW) / 10, (p.z + rz * halfW) / 10);
         if (i > 0) {
           const a = (i - 1) * 2, c = i * 2;
           idx.push(a, a + 1, c, a + 1, c + 1, c);
@@ -1749,6 +1772,7 @@ function buildGhostRoads(closedSet) {
       }
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
       g.setIndex(idx);
       g.computeVertexNormals();
       /* Winding decides which way the normals point, and a ribbon built
@@ -1768,6 +1792,39 @@ function buildGhostRoads(closedSet) {
       const m = new THREE.Mesh(g, isShut ? shut : deck);
       m.receiveShadow = true;
       courseRoot.add(m);
+
+      if (!isShut) {
+        /* A parapet down both edges of the branch, at exactly the same offset
+           the physics barrier uses. Suppressing the spine's roadside inside a
+           fork left the branches with no visible edge at all — which is the
+           invisible-wall bug all over again, just localised to the one place
+           the player most needs to read where the road goes. */
+        for (const sgn of [-1, 1]) {
+          const bp = [], bidx = [];
+          for (let i = 0; i < line.length; i++) {
+            const p = line[i];
+            const q0 = line[Math.max(0, i - 1)], q1 = line[Math.min(line.length - 1, i + 1)];
+            const hx = q1.x - q0.x, hz = q1.z - q0.z;
+            const hl = Math.hypot(hx, hz) || 1e-6;
+            const rx = -hz / hl, rz = hx / hl;
+            const off = sgn * (p.w + T.VERGE);
+            const x = p.x + rx * off, z = p.z + rz * off;
+            bp.push(x, p.y - 0.1, z, x, p.y + 1.0, z);
+            if (i > 0) {
+              const a = (i - 1) * 2, c = i * 2;
+              bidx.push(a, a + 1, c, a + 1, c + 1, c);
+            }
+          }
+          const bg = new THREE.BufferGeometry();
+          bg.setAttribute('position', new THREE.Float32BufferAttribute(bp, 3));
+          bg.setIndex(bidx);
+          bg.computeVertexNormals();
+          const bm = new THREE.Mesh(bg, new THREE.MeshLambertMaterial({
+            color: TH.rail, side: THREE.DoubleSide }));
+          bm.castShadow = true;
+          courseRoot.add(bm);
+        }
+      }
 
       if (isShut) {
         /* A chain across the mouth. One bar, at the point where the branch
@@ -2567,7 +2624,7 @@ export function build() {
   buildBarriers();
   buildMarks();
   buildSetPieces(tr);
-  buildGhostRoads(closedRoads);
+  buildBranchRoads(closedRoads);
   buildFurniture(tr);
   buildRoadside(tr);
   buildCloudDeck();
@@ -2910,6 +2967,13 @@ export function frame(S, dt) {
 
   for (const c of cloudDecks) {
     c.mesh.position.x += c.drift * dt;         // slow drift, so it is weather
+    /* Hide any sheet the CAMERA is not comfortably above. The chase camera
+       rides ~6.5 m over the kart, so on a road only a few metres above the deck
+       the camera ends up on top of a 620 m white plane while the kart is under
+       it — the whole screen goes white and the road and cart vanish behind it.
+       Being above the clouds is the effect; being inside one is a bug. */
+    const eye = (view === 'iso' ? camera : persp).position.y;
+    c.mesh.visible = eye > c.mesh.position.y + 3.0;
   }
 
   /* Open the roof while the cart is under it, with a margin so it is already

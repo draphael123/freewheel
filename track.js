@@ -72,7 +72,11 @@ export const COURSES = {
        so a branch that swings wide really is longer to drive — without that the
        whole shorter-vs-longer trade would be a lie. */
     forks: [
-      { id: 'cornice', from: 430, to: 570, prompt: 'the drop, or around it',
+      /* Starts 35 m clear of the cloud deck. Butted straight against it the
+         split happened over ground the sky road had dropped away, so the two
+         branches diverged across a void with cloud where the hillside should
+         be — unreadable exactly where a decision is being asked for. */
+      { id: 'cornice', from: 465, to: 600, prompt: 'the drop, or around it',
         branches: [
           { id: 'drop', name: 'THE DROP', side: -1, bulge: 4, w: 5.2,
             grip: 0.72, bank: 2, note: 'straight down the fall line' },
@@ -95,13 +99,17 @@ export const COURSES = {
         ] },
     ],
     hazards: [
-      { s: 480, u: -3.0 }, { s: 494, u: 0.6 },
-      { s: 560, u:  2.0 },
+      /* Kept OUT of the fork ranges (465-600, 1450-1640, 2230-2360). A hazard is
+         placed at a spine offset, and inside a fork the spine is the gap
+         BETWEEN the two roads — so a bale there floats in the median, in the
+         middle of the frame, exactly where the decision is. */
+      { s: 440, u: -3.0 }, { s: 452, u: 0.6 },
+      { s: 625, u:  2.0 },
       { s: 690, u: -2.4 }, { s: 702, u: 1.2 },
       { s: 940, u: 1.8 },
       { s: 1180, u: -2.2 }, { s: 1194, u: 1.4 },
-      { s: 1470, u: 2.6 },
-      { s: 1620, u: -3.4 },
+      { s: 1680, u: 2.6 },
+      { s: 1720, u: -3.4 },
       { s: 1880, u: 1.0 }, { s: 1892, u: -2.6 },
       { s: 2080, u: -1.2 },
     ],
@@ -236,29 +244,71 @@ export let ID, TITLE, BLURB, OWNS, THEME, HALF_W, SLAB;
 export let PTS, LENGTH, NAMES, TOP_Y, BOT_Y, HAZARDS;
 /* The fork table for the loaded course, and the route actually driven. */
 export let FORKS = [], ROUTE = {};
-let SPINE = null;
+let SPINE = null, BRANCH = {};
+/* Branches the season has closed, as "forkId/branchId". Set by main.js; the
+   physics will not let you take a road that is gone. */
+let CLOSED = new Set();
+export const setClosedBranches = (set) => { CLOSED = set || new Set(); };
+export const isBranchOpen = (fid, bid) => !CLOSED.has(fid + '/' + bid);
+
+/* The fork whose range contains s, or null. */
+/* True where the spine is NOT a road — inside a fork the two branches are the
+   road and the spine runs down the gap between them. Everything that decorates
+   the roadside has to skip these ranges or it ends up floating in the median. */
+export const inFork = (s) => !!forkAt(s);
+
+export function forkAt(s) {
+  for (const f of FORKS) if (s >= f.from && s <= f.to) return f;
+  return null;
+}
+/* Which branches of this fork you may actually enter. */
+export const openOf = (f) =>
+  f.branches.filter((b) => isBranchOpen(f.id, b.id));
+
+/* Sampled corridor lookup. `bid` must belong to `fid`. */
+function bAt(fid, bid, s, key) {
+  const B = BRANCH[fid + '/' + bid];
+  if (!B) return null;
+  const f = (s / STEP) - B.i0;
+  const i = Math.max(0, Math.min(B.n - 1, Math.floor(f)));
+  const j = Math.min(B.n - 1, i + 1);
+  const t = Math.max(0, Math.min(1, f - i));
+  return B[key][i] + (B[key][j] - B[key][i]) * t;
+}
+export const branchOffsetAt = (fid, bid, s) => bAt(fid, bid, s, 'off') || 0;
+export const branchWidthAt = (fid, bid, s) => bAt(fid, bid, s, 'wid');
+export const branchGripAt = (fid, bid, s) => bAt(fid, bid, s, 'grp');
+export const branchBankAt = (fid, bid, s) => bAt(fid, bid, s, 'bnk');
+export const branchStretchAt = (fid, bid, s) => bAt(fid, bid, s, 'str') || 1;
+export const branchName = (fid, bid) =>
+  (BRANCH[fid + '/' + bid] || {}).name || null;
 
 /* The centreline of any branch, chosen or not, in world space. This is what
    lets the renderer show you the road you turned down. */
 export function branchPolyline(forkId, branchId, step = 3) {
   const f = FORKS.find((k) => k.id === forkId);
-  if (!f || !SPINE) return [];
-  const b = branchOf(f, branchId);
+  if (!f || !SPINE || !BRANCH[forkId + '/' + branchId]) return [];
   const span = f.to - f.from;
   const out = [];
   for (let t = f.from; t <= f.to; t += step) {
-    const i = Math.round(t / STEP);
-    const p = SPINE[Math.min(SPINE.length - 1, Math.max(0, i))];
+    const p = SPINE[Math.min(SPINE.length - 1, Math.max(0, Math.round(t / STEP)))];
     if (!p) continue;
-    const k = bump((t - f.from) / span);
-    const off = b.side * b.bulge * k;
+    const off = branchOffsetAt(forkId, branchId, t);
     out.push({
       x: p.x + p.rx * off, y: p.y, z: p.z + p.rz * off,
-      w: p.halfW + ((b.w != null ? b.w : p.halfW) - p.halfW) * k,
-      k,
+      w: branchWidthAt(forkId, branchId, t) || p.halfW,
+      off, k: bump((t - f.from) / span),
     });
   }
   return out;
+}
+
+/* World position of a point on a branch, for placing things beside it. */
+export function branchPointAt(forkId, branchId, s, u = 0) {
+  const p = SPINE[Math.min(SPINE.length - 1, Math.max(0, Math.round(s / STEP)))];
+  if (!p) return null;
+  const off = branchOffsetAt(forkId, branchId, s) + u;
+  return { x: p.x + p.rx * off, y: p.y, z: p.z + p.rz * off, rx: p.rx, rz: p.rz };
 }
 
 export const forksOf = (id) => (COURSES[id] || {}).forks || [];
@@ -330,17 +380,23 @@ export function load(id, route) {
     skyroad: false, hall: false,
   });
 
-  /* ---- forks ------------------------------------------------------------
-     Displace the spine laterally for the chosen branch, override its character
-     over the same range, then resample. Frames are computed AFTER this, from
-     finite differences on the points we actually kept, so the curvature of a
-     bulging branch is real and the physics can never disagree with the mesh. */
+  /* ---- forks -------------------------------------------------------------
+     The centreline is now ALWAYS the spine. A branch is a corridor described
+     relative to it — offset, width, grip, bank and a stretch factor — and the
+     physics decides at the fork mouth which corridor you are in, by which side
+     of the spine you are on.
+
+     This replaces baking the chosen branch into the points and resampling. That
+     worked, but it meant the route had to be picked on a menu before the run,
+     because the geometry was already committed by the time you were driving.
+
+     The stretch factor is what the resample used to buy: a branch that swings
+     wide is genuinely further to drive, and without accounting for it the long
+     way round would be free. Rather than resampling the whole course, each
+     branch carries the local ratio of its own arc length to the spine's, and
+     sim.js divides forward progress by it. Same physics, decided at runtime. */
   FORKS = C.forks || [];
   ROUTE = {};
-  /* Right-of-travel for every point of the UNDISPLACED spine, computed up front.
-     Deriving it from neighbours while displacing reads points that have already
-     moved, so the offset compounds into itself — the first version of this made
-     a 2670 m course measure 23 km. */
   const rgt = new Float64Array(pts.length * 2);
   for (let i = 0; i < pts.length; i++) {
     const q0 = pts[Math.max(0, i - 1)], q1 = pts[Math.min(pts.length - 1, i + 1)];
@@ -348,76 +404,50 @@ export function load(id, route) {
     const hl = Math.hypot(hx, hz) || 1e-6;
     rgt[i * 2] = -hz / hl; rgt[i * 2 + 1] = hx / hl;
   }
-  /* Keep the undisplaced spine. The roads you did NOT take have to be drawn,
-     and they cannot be recovered from PTS once a branch has been baked in and
-     the whole thing resampled. */
   SPINE = pts.map((p, i) => ({
     x: p.x, y: p.y, z: p.z, s: p.s,
     rx: rgt[i * 2], rz: rgt[i * 2 + 1], halfW: p.halfW,
+    grip: p.grip, bankMag: p.bankMag,
   }));
+
+  /* Per-branch sampled corridor, at the same 0.5 m spacing as the spine. */
+  BRANCH = {};
   for (const f of FORKS) {
-    /* A route entry is either a branch id, or {id, grip, width} carrying the
-       season's wear factors. track.js deliberately does not know what wear IS
-       — season.js owns that curve — it only knows how to apply a multiplier. */
-    const want = route && route[f.id];
-    const wantId = typeof want === 'string' ? want : (want && want.id);
-    const wGrip = (want && want.grip != null) ? want.grip : 1;
-    const wWide = (want && want.width != null) ? want.width : 1;
-    const b = branchOf(f, wantId);
-    ROUTE[f.id] = b.id;
-
     const span = f.to - f.from;
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      if (p.s < f.from || p.s > f.to) continue;
-      const k = bump((p.s - f.from) / span);
-      const rx = rgt[i * 2], rz = rgt[i * 2 + 1];
-      const off = b.side * b.bulge * k;
-      p.x += rx * off; p.z += rz * off;
-      /* Character. Blended in on the same bump so a branch does not snap to a
-         different grip halfway through the join. */
-      const bw = (b.w != null ? b.w : p.halfW) * wWide;
-      const bg = (b.grip != null ? b.grip : p.grip) * wGrip;
-      p.halfW = p.halfW + (bw - p.halfW) * k;
-      p.grip = p.grip + (bg - p.grip) * k;
-      if (b.bank != null) p.bankMag = p.bankMag + (b.bank * Math.PI / 180 - p.bankMag) * k;
-      if (k > 0.02) p.label = b.name;
+    const i0 = Math.round(f.from / STEP), i1 = Math.round(f.to / STEP);
+    for (const b of f.branches) {
+      /* route is now {forkId: {branchId: {grip, width}}} — a wear factor per
+         BRANCH, because with a live fork the course is built before anyone
+         knows which road will be taken. */
+      const wear = (route && route[f.id] && route[f.id][b.id]) || null;
+      const wGrip = wear && wear.grip != null ? wear.grip : 1;
+      const wWide = wear && wear.width != null ? wear.width : 1;
+      const n = i1 - i0 + 1;
+      const off = new Float64Array(n), wid = new Float64Array(n);
+      const grp = new Float64Array(n), bnk = new Float64Array(n);
+      const str = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
+        const sp = pts[Math.min(pts.length - 1, i0 + i)];
+        const k = bump((sp.s - f.from) / span);
+        off[i] = b.side * b.bulge * k;
+        const bw = (b.w != null ? b.w : sp.halfW) * wWide;
+        const bg = (b.grip != null ? b.grip : sp.grip) * wGrip;
+        wid[i] = sp.halfW + (bw - sp.halfW) * k;
+        grp[i] = sp.grip + (bg - sp.grip) * k;
+        bnk[i] = sp.bankMag + ((b.bank != null ? b.bank * Math.PI / 180 : sp.bankMag)
+                               - sp.bankMag) * k;
+      }
+      /* Stretch: how much real distance a metre of spine costs on this branch.
+         d(offset)/ds is the lateral rate; the path is the hypotenuse of that
+         and the forward step. */
+      for (let i = 0; i < n; i++) {
+        const a = off[Math.max(0, i - 1)], c = off[Math.min(n - 1, i + 1)];
+        const dods = (c - a) / (2 * STEP);
+        str[i] = Math.sqrt(1 + dods * dods);
+      }
+      BRANCH[f.id + '/' + b.id] = { i0, i1, n, off, wid, grp, bnk, str, name: b.name, side: b.side };
     }
-  }
-
-  /* ---- resample to true arc length --------------------------------------
-     Displacing the centreline changes how far there is to drive, and the whole
-     point of a fork is that the wide line COSTS you something. Leaving s as the
-     spine parameter would have made the long way round free. */
-  if (FORKS.length) {
-    const cum = [0];
-    for (let i = 1; i < pts.length; i++) {
-      cum[i] = cum[i - 1] + Math.hypot(
-        pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y, pts[i].z - pts[i - 1].z);
-    }
-    const total = cum[cum.length - 1];
-    const out = [];
-    let j = 0;
-    for (let t = 0; t <= total; t += STEP) {
-      while (j < cum.length - 2 && cum[j + 1] < t) j++;
-      const seg = (cum[j + 1] - cum[j]) || 1e-6;
-      const u = Math.min(1, Math.max(0, (t - cum[j]) / seg));
-      const A = pts[j], B = pts[Math.min(pts.length - 1, j + 1)];
-      const mix = (k) => A[k] + (B[k] - A[k]) * u;
-      out.push({
-        x: mix('x'), y: mix('y'), z: mix('z'), s: t,
-        seg: u < 0.5 ? A.seg : B.seg,
-        grip: mix('grip'), bankMag: mix('bankMag'), halfW: mix('halfW'),
-        zone: u < 0.5 ? A.zone : B.zone,
-        tunnel: u < 0.5 ? A.tunnel : B.tunnel,
-        bridge: u < 0.5 ? A.bridge : B.bridge,
-        skyroad: u < 0.5 ? A.skyroad : B.skyroad,
-        hall: u < 0.5 ? A.hall : B.hall,
-        label: u < 0.5 ? A.label : B.label,
-      });
-    }
-    pts.length = 0;
-    Array.prototype.push.apply(pts, out);
+    ROUTE[f.id] = f.branches[0].id;
   }
 
   /* Frames. Pitch is signed: negative descends. Vertical curvature is the rate

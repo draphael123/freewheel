@@ -202,13 +202,16 @@ function openSeason(courseId) {
 /* Wear does two things and they are NOT the same: it eventually closes a road,
    and long before that it makes it worse to drive. The second is the half you
    feel, so it is baked into the course as grip and width factors. */
-function routeWithWear(courseId, picked) {
+/* Wear factors for EVERY branch, because with a live fork the game cannot know
+   which one you will take until you take it. */
+function routeWithWear(courseId) {
   const out = {};
   for (const f of T.forksOf(courseId)) {
-    const bid = picked[f.id];
-    const c = SEASON.conditionOf(f.id, bid);
-    const w = SEASON.wearEffect(c);
-    out[f.id] = { id: bid, grip: w.grip, width: w.width };
+    out[f.id] = {};
+    for (const b of f.branches) {
+      const w = SEASON.wearEffect(SEASON.conditionOf(f.id, b.id));
+      out[f.id][b.id] = { grip: w.grip, width: w.width };
+    }
   }
   return out;
 }
@@ -243,30 +246,29 @@ function drawRoute() {
     });
   });
 
+  /* The forks are a REPORT now, not a picker: you choose on the road, by which
+     side of the split you are on when you get there. What the board is for is
+     knowing what state each road is in BEFORE you commit to it at 60 mph. */
   el('rForks').innerHTML = forks.map((f) => {
     const opts = f.branches.map((b) => {
       const c = SEASON.conditionOf(f.id, b.id);
       const shut = c <= SEASON.CLOSED_AT;
-      const on = pickedRoute[f.id] === b.id && !shut;
-      return `<button class="opt${on ? ' on' : ''}${shut ? ' shut' : ''}`
+      return `<button class="opt${shut ? ' shut' : ''}`
         + `${!shut && c < 0.3 ? ' warn' : ''}" data-fork="${f.id}" data-branch="${b.id}"
-           ${shut ? 'disabled' : ''}>
+           disabled style="cursor:default">
           <div class="on1">${b.name}</div>
           <div class="on2">${shut ? 'the road is gone' : b.note}</div>
           <div class="cbar"><div class="cfill" style="width:${Math.round(c * 100)}%"></div></div>
           <div class="cw">${SEASON.conditionWord(c)}</div>
         </button>`;
     }).join('');
-    return `<div class="fork"><div class="fh">${f.prompt}</div>
+    const open = f.branches.filter((b) => SEASON.isOpen(f.id, b.id));
+    const note = open.length > 1 ? 'you choose this one on the road'
+      : open.length === 1 ? `only ${open[0].name} is left`
+      : 'no way through';
+    return `<div class="fork"><div class="fh">${f.prompt} &mdash; ${note}</div>
             <div class="opts">${opts}</div></div>`;
   }).join('');
-
-  el('rForks').querySelectorAll('.opt').forEach((b) => {
-    b.addEventListener('click', () => {
-      pickedRoute[b.dataset.fork] = b.dataset.branch;
-      drawRoute();
-    });
-  });
 
   /* When the season is over the board must offer a way FORWARD. It used to
      disable the button and leave "give up the season" as the only live control,
@@ -310,31 +312,23 @@ function startRun(courseId, route) {
     /* Tell the renderer what has closed BEFORE it builds, so the roads you can
        no longer take come up chained rather than merely unchosen. */
     const shut = new Set();
-    for (const f of T.forksOf(courseId)) {
-      for (const b of f.branches) {
-        if (!SEASON.state() || !SEASON.isOpen(f.id, b.id)) {
-          if (SEASON.state()) shut.add(f.id + '/' + b.id);
+    if (SEASON.state()) {
+      for (const f of T.forksOf(courseId)) {
+        for (const b of f.branches) {
+          if (!SEASON.isOpen(f.id, b.id)) shut.add(f.id + '/' + b.id);
         }
       }
     }
     R.setClosedRoads(shut);
-    T.load(courseId, route ? routeWithWear(courseId, route) : null);
+    T.setClosedBranches(shut);
+    T.load(courseId, route ? routeWithWear(courseId) : null);
     R.build();
     drawProfile();
   }
   /* Rivals wear the mountain too. Without this the road is being destroyed by
      you alone, which reads as the game punishing you for playing. */
+  /* Filled in from what the rivals actually drove, when the run ends. */
   rivalRoutes = [];
-  if (route) {
-    for (const f of T.forksOf(courseId)) {
-      const open = SEASON.openBranches(f);
-      for (let i = 0; i < 4; i++) {
-        rivalRoutes[i] = rivalRoutes[i] || {};
-        rivalRoutes[i][f.id] = open.length
-          ? open[Math.floor(Math.random() * open.length)].id : f.branches[0].id;
-      }
-    }
-  }
   field = RACE.createField();
   R.setField(field.carts);
   S = field.you;
@@ -606,7 +600,12 @@ function finish() {
      line you just drove is worse than it was, and may be gone. */
   const forks = T.forksOf(T.ID);
   if (seasonCourse && forks.length) {
-    const r = SEASON.recordRun(forks, { ...T.ROUTE }, rivalRoutes, place, pickedLoad);
+    /* The route is now an OUTCOME. S.route is what you actually drove, filled
+       in at each fork mouth by which side you were on. */
+    rivalRoutes = field.carts.filter((c) => !c.isPlayer).map((c) => ({ ...(c.route || {}) }));
+    const driven = { ...(S.route || {}) };
+    for (const f of forks) if (!driven[f.id]) driven[f.id] = SEASON.legalRoute([f], {})[f.id];
+    const r = SEASON.recordRun(forks, driven, rivalRoutes, place, pickedLoad);
     lastClosed = r ? r.closed : [];
     const st = SEASON.state();
     el('dseason').textContent = st.done

@@ -105,7 +105,15 @@ export function createField() {
    -------------------------------------------------------------------------- */
 function driveAI(c, field, dt) {
   const ai = c.ai;
-  const edge = T.halfWAt(c.s) - 1.4;
+  /* Rivals drive the same live forks you do. Their lateral target is relative
+     to the CENTRE OF THE ROAD THEY ARE ON, not to the spine — aiming at the
+     spine inside a fork would steer them into the gap between the two roads.
+     Which branch they take falls out of the same rule as yours (whichever side
+     they happened to be on at the mouth), so the field genuinely splits. */
+  const fk = T.forkAt(c.s);
+  const cen = (fk && c.branch) ? T.branchOffsetAt(fk.id, c.branch, c.s) : 0;
+  const edge = ((fk && c.branch) ? T.branchWidthAt(fk.id, c.branch, c.s)
+                                 : T.halfWAt(c.s)) - 1.4;
 
   /* How much cornering the road is about to ask for, in units of what the
      tyres can supply. Seen through their reaction time, so a poor rival is
@@ -118,7 +126,7 @@ function driveAI(c, field, dt) {
   /* Line: hug the inside, plus a personal bias so the field does not converge
      into a single file. */
   const dirAhead = T.khAt(Math.min(T.LENGTH - 1, c.s + lead * 0.6));
-  let target = -Math.sign(dirAhead) * edge * 0.78 * ai.skill + ai.line * edge * 0.40;
+  let target = cen - Math.sign(dirAhead) * edge * 0.78 * ai.skill + ai.line * edge * 0.40;
 
   /* Avoidance considers everyone nearby and picks the side with room; a rival
      that always swerved the same way herded the pack into one corner of the
@@ -134,8 +142,8 @@ function driveAI(c, field, dt) {
   if (blocker) {
     const room = (side) => {
       const lane = blocker.u + side * 3.6;
-      if (Math.abs(lane) > edge) return -1;
-      let free = edge - Math.abs(lane);
+      if (Math.abs(lane - cen) > edge) return -1;
+      let free = edge - Math.abs(lane - cen);
       for (const o of field.carts) {
         if (o === c || o.done) continue;
         if (Math.abs(o.s - c.s) < 20 && Math.abs(o.u - lane) < 2.6) free -= 5;
@@ -146,7 +154,7 @@ function driveAI(c, field, dt) {
     if (L < 0 && R < 0) { boxed = true; target = c.u; }
     else target = blocker.u + (L >= R ? -3.6 : 3.6);
   }
-  target = Math.max(-edge, Math.min(edge, target));
+  target = Math.max(cen - edge, Math.min(cen + edge, target));
 
   return {
     /* Where they lift and brake is the pace lever, bracketed around the
