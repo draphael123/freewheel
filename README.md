@@ -77,6 +77,21 @@ Three of those are places rather than corners: **THE SPAN** refuses the terrain
 carve so the ground drops away and the road is a bridge, **THE ADIT** is a
 tunnel, and **THE VILLAGE** is a street with houses hard against both verges.
 
+## Sound
+
+Synthesised, not sampled — the project stays asset-free, but mostly because the
+two sounds that matter are continuous and have to track state exactly. The
+engine note follows speed and throttle, and **the tyres start squealing at
+precisely the moment the grip meter goes amber**: the same information the bar
+carries, in the channel you are not looking at.
+
+Also wind with speed, crowd that swells in the village, a drone for the pack
+when you are among them, and one-shots fired off counters the physics already
+keeps — so a sound can never disagree with what happened.
+
+`M` mutes. Measured on the master bus: silent in menus, louder with speed, and
+the 1.2–2.6 kHz band nearly doubles when the tyres let go.
+
 ## Views and difficulty
 
 Three cameras, cycled with `C` or set in Settings:
@@ -280,6 +295,7 @@ a stale module reads exactly like a code bug.
 | `sim.js` | cart physics and the headless policies |
 | `render.js` | the look, and the readability experiment |
 | `race.js` | the field: rivals, contact, the tow, standings |
+| `audio.js` | synthesised engine, tyres, wind, crowd and one-shots |
 | `main.js` | screens, input, fixed-timestep loop |
 
 three.js r160 is vendored in `vendor/` on purpose — a CDN miss leaves a menu

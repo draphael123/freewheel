@@ -10,12 +10,13 @@
    and the physics to the new course while the renderer quietly kept building
    the old one. Freshness is handled where it belongs — the dev server sends
    no-store and vercel.json sends must-revalidate on every .js. */
-const [T, SIM, R, THEME, RACE] = await Promise.all([
+const [T, SIM, R, THEME, RACE, AUDIO] = await Promise.all([
   import('./track.js'),
   import('./sim.js'),
   import('./render.js'),
   import('./theme.js'),
   import('./race.js'),
+  import('./audio.js'),
 ]);
 
 const el = (id) => document.getElementById(id);
@@ -34,6 +35,15 @@ const bestFor = (id) => +(localStorage.getItem(bestKey(id)) || 0) || null;
 /* -------------------------------- settings -------------------------------- */
 const SAVED = 'fw.opts';
 let res = +(localStorage.getItem('fw.res') || 1);
+/* Declared up here because syncSettingsUI runs during module init, and a `let`
+   further down is still in its temporal dead zone at that point. */
+let muted = localStorage.getItem('fw.mute') === '1';
+
+/* Sound has to be created on a real gesture, so arm it from the first one of
+   any kind rather than only from the button that starts a race. */
+function armAudio() { AUDIO.unlock(); AUDIO.setMuted(muted); }
+addEventListener('pointerdown', armAudio, { once: true });
+addEventListener('keydown', armAudio, { once: true });
 
 function loadOpts() {
   try {
@@ -46,6 +56,7 @@ function saveOpts() {
   localStorage.setItem('fw.res', String(res));
   localStorage.setItem('fw.diff', RACE.difficulty);
   localStorage.setItem('fw.view', R.getView());
+  localStorage.setItem('fw.mute', muted ? '1' : '0');
 }
 function syncSettingsUI() {
   document.querySelectorAll('[data-opt]').forEach((row) => {
@@ -60,6 +71,7 @@ function syncSettingsUI() {
   document.querySelectorAll('#viewSeg button').forEach((b) => {
     b.classList.toggle('on', b.dataset.view === R.getView());
   });
+  el('muteRow').classList.toggle('on', !muted);
 }
 document.querySelectorAll('[data-opt]').forEach((row) => {
   row.addEventListener('click', () => {
@@ -75,6 +87,9 @@ document.querySelectorAll('#diffSeg button').forEach((b) => {
 });
 document.querySelectorAll('#viewSeg button').forEach((b) => {
   b.addEventListener('click', () => { R.setView(b.dataset.view); syncSettingsUI(); saveOpts(); });
+});
+el('muteRow').addEventListener('click', () => {
+  muted = !muted; AUDIO.setMuted(muted); syncSettingsUI(); saveOpts();
 });
 loadOpts();
 RACE.setDifficulty(localStorage.getItem('fw.diff') || 'normal');
@@ -100,7 +115,10 @@ function startRun(courseId) {
   R.setField(field.carts);
   S = field.you;
   countdown = 3.2;
+  lastCount = 9;
   lastPumpShown = 0;
+  snap = { bale: 0, wall: 0, spin: 0, land: 0 };
+  armAudio();
   show('play');
 }
 
@@ -165,6 +183,7 @@ addEventListener('keydown', (e) => {
   }
   if (k === 'r') startRun();
   if (k === 'v') show('venues');
+  if (k === 'm') { muted = !muted; AUDIO.setMuted(muted); saveOpts(); }
   if (k === 'c') {
     const i = R.VIEWS.indexOf(R.getView());
     R.setView(R.VIEWS[(i + 1) % R.VIEWS.length]);
@@ -200,7 +219,8 @@ function drawProfile() {
 drawProfile();
 
 /* ---------------------------------- HUD ----------------------------------- */
-let flashT = 0, lastPumpShown = 0, countdown = 0;
+let flashT = 0, lastPumpShown = 0, countdown = 0, lastCount = 9;
+let snap = { bale: 0, wall: 0, spin: 0, land: 0 }, wasBoosting = false;
 
 function updateHUD(dt) {
   el('mph').textContent = Math.round(S.v * 2.2369);
@@ -274,6 +294,7 @@ function finish() {
   } else {
     el('dbest').textContent = `best ${b.toFixed(2)}s`;
   }
+  AUDIO.sfx.place();
   show('done');
 }
 
@@ -294,9 +315,10 @@ function tick(now) {
       /* Held on the grid. Physics is frozen rather than merely input-locked, so
          nobody rolls away down a 10% slope while the lights are still on. */
       countdown -= dt;
-      el('count').textContent = countdown > 0.35
-        ? String(Math.ceil(countdown - 0.2)) : 'GO';
-      el('count').classList.toggle('go', countdown <= 0.35);
+      const n = countdown > 0.35 ? Math.ceil(countdown - 0.2) : 0;
+      if (n !== lastCount) { lastCount = n; n > 0 ? AUDIO.sfx.count() : AUDIO.sfx.go(); }
+      el('count').textContent = n > 0 ? String(n) : 'GO';
+      el('count').classList.toggle('go', n === 0);
       acc = 0;
     } else {
       el('count').textContent = '';
@@ -306,9 +328,29 @@ function tick(now) {
       while (acc >= HZ && guard++ < 60) { RACE.step(field, HZ, S.input); acc -= HZ; }
     }
     updateHUD(dt);
+
+    /* One-shots fire off counters the physics already keeps, so a sound can
+       never disagree with what happened. */
+    if (S.baleHits > snap.bale) { snap.bale = S.baleHits; AUDIO.sfx.bale(); }
+    if (S.wallHits > snap.wall) { snap.wall = S.wallHits; AUDIO.sfx.wall(); }
+    if (S.spins > snap.spin) { snap.spin = S.spins; AUDIO.sfx.spin(); }
+    if (S.cleanLandings > snap.land) { snap.land = S.cleanLandings; AUDIO.sfx.land(); }
+    const boosting = S.input.boost && S.charge > 0.02;
+    if (boosting && !wasBoosting) AUDIO.sfx.boost();
+    wasBoosting = boosting;
+
+    const Z = THEME.get(T.THEME).zones[T.zoneAt(S.s)];
+    let nearest = 999;
+    for (const c of field.carts) {
+      if (c === S || c.done) continue;
+      nearest = Math.min(nearest, Math.abs(c.s - S.s));
+    }
+    AUDIO.update(S, { playing: true, crowd: Z ? Z.blds : 0, nearest });
+
     if (S.done) finish();
   } else {
     acc = 0;
+    AUDIO.update(S, { playing: false });
   }
 
   R.frame(S, dt);                    // menus render the live scene behind them
