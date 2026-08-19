@@ -11,6 +11,7 @@
 
 import * as THREE from './vendor/three.module.js';
 import * as T from './track.js';
+import * as THEME from './theme.js';
 
 export const opts = {
   shadow: true,      // 1  hard contact ellipse on the surface below the cart
@@ -32,6 +33,8 @@ export function setRes(scale) {
 
 let renderer, scene, camera, cart, rider, blob, reticle, tether, sun, hemi, fog;
 let sky, dust, dustP = [], shakeT = 0;
+let courseRoot, TH = THEME.get('alpine');
+const hex = (c) => new THREE.Color(c[0], c[1], c[2]);
 let roadMesh, roadPlain, roadTint, pylons, postGroup, treeGroup;
 let camYaw = 0, camYawTarget = 0, camSize = 46;
 
@@ -40,18 +43,26 @@ const CAM_PITCH = 40 * Math.PI / 180;   // steeper than a classic 2:1 iso, so
                                         // "up" and "away" are not the same
                                         // screen vector to begin with
 const CAM_DIST = 220;
-const SUN_DIR = new THREE.Vector3(-0.52, 0.72, -0.66).normalize();  // ~36 deg;
-                     // at 24 deg the shadows were long enough to read as artefacts
+/* Sun direction is per theme; at 24 degrees the shadows were long enough to
+   read as artefacts, so no theme should sit much below ~35. */
+const SUN_DIR = new THREE.Vector3();
 
 /* Road normal and basis at (s). Needed constantly: to sit the cart on the
    surface, to lie the contact shadow flat against a slope, and to build the
    slab. */
 function basisAt(s) {
-  const h = T.headAt(s), p = T.pitchAt(s);
+  const h = T.headAt(s), p = T.pitchAt(s), bank = T.bankAt(s);
   const tan = new THREE.Vector3(Math.cos(h) * Math.cos(p), Math.sin(p), Math.sin(h) * Math.cos(p));
-  const right = new THREE.Vector3(-Math.sin(h), 0, Math.cos(h));
-  const nrm = new THREE.Vector3().crossVectors(right, tan).normalize();
-  if (nrm.y < 0) nrm.negate();
+  const flatR = new THREE.Vector3(-Math.sin(h), 0, Math.cos(h));
+  const flatN = new THREE.Vector3().crossVectors(flatR, tan).normalize();
+  if (flatN.y < 0) flatN.negate();
+  if (!bank) return { tan, right: flatR, nrm: flatN };
+  /* Roll the cross-section about the tangent. Built directly rather than by
+     quaternion so the sign is visible: a positive bank tilts `right` upward,
+     which matches surfaceAt raising the outside of the corner. */
+  const c = Math.cos(bank), sn = Math.sin(bank);
+  const right = flatR.clone().multiplyScalar(c).addScaledVector(flatN, sn).normalize();
+  const nrm = flatN.clone().multiplyScalar(c).addScaledVector(flatR, -sn).normalize();
   return { tan, right, nrm };
 }
 
@@ -113,8 +124,9 @@ function buildRoad(tr) {
        tone mapping both were simply white. The road must be the darkest large
        shape on the hill in every altitude band, because it is the one shape
        the player has to read. */
-    for (let k = 0; k < 2; k++) plain.push(0.115, 0.105, 0.098);
-    for (let k = 0; k < 2; k++) plain.push(0.150, 0.120, 0.090);   // stone facing
+    const RT = TH.road.top, RW = TH.road.wall;
+    for (let k = 0; k < 2; k++) plain.push(RT[0], RT[1], RT[2]);
+    for (let k = 0; k < 2; k++) plain.push(RW[0], RW[1], RW[2]);
 
     /* Slope tint: warm where the road falls away, cool where it climbs. This
        is the cheapest possible answer to "which way is downhill" and the one
@@ -151,7 +163,7 @@ function buildRoad(tr) {
   roadMesh = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true }));
   roadMesh.receiveShadow = true;
   roadMesh.castShadow = true;
-  scene.add(roadMesh);
+  courseRoot.add(roadMesh);
 }
 
 /* Dashed centre line. Two jobs for almost no cost: it is the only thing that
@@ -178,8 +190,8 @@ function buildCentreLine() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
-  const m = new THREE.MeshBasicMaterial({ color: 0xcfc4ab });
-  scene.add(new THREE.Mesh(g, m));
+  const m = new THREE.MeshBasicMaterial({ color: TH.dash });
+  courseRoot.add(new THREE.Mesh(g, m));
 }
 
 /* -------------------------------------------------------------------------- */
@@ -226,7 +238,7 @@ function buildTerrain() {
          independent of the road, so the mountain has topography the course
          cuts across rather than topography derived from the course. Without
          it every hillside is a smooth ramp parallel to the tarmac. */
-      const amp = 3.0 + Math.min(d, 120) * 0.11;
+      const amp = (3.0 + Math.min(d, 120) * 0.11) * TH.terrain.relief;
       const n = fbm(x / 46, z / 46) * amp * 2
               + fbm(x / 205 + 11.3, z / 205 - 7.1) * 44;
       const smooth = ysum / wsum - 3.0 - Math.min(d * 0.20, 24) + n;
@@ -255,16 +267,7 @@ function buildTerrain() {
   /* Altitude ramp with tight transitions: distinct bands, but not aliased.
      Rock is painted by SLOPE rather than height, which is what stops a
      low-poly hillside reading as felt. */
-  const STOPS = [
-    [0.00, [.34, .33, .30]],   // shore and town
-    [0.19, [.34, .33, .30]],
-    [0.26, [.52, .41, .20]],   // terraces
-    [0.42, [.52, .41, .20]],
-    [0.50, [.22, .34, .23]],   // pinewood
-    [0.74, [.22, .34, .23]],
-    [0.81, [.74, .77, .82]],   // snow
-    [1.00, [.74, .77, .82]],
-  ];
+  const STOPS = TH.terrain.stops;
   const ramp = (a) => {
     for (let k = 0; k < STOPS.length - 1; k++) {
       const [p0, c0] = STOPS[k], [p1, c1] = STOPS[k + 1];
@@ -275,7 +278,7 @@ function buildTerrain() {
     }
     return STOPS[0][1];
   };
-  const ROCK = [.30, .27, .25];
+  const ROCK = TH.terrain.rock;
 
   for (let j = 0; j <= nz; j++) {
     for (let i = 0; i <= nx; i++) {
@@ -301,7 +304,7 @@ function buildTerrain() {
       const rk = t * t * (3 - 2 * t);
       /* Two scales of variation: fine per-vertex grain, plus a broad drift so
          the hillside has weather in it rather than one flat albedo. */
-      const sh = 0.86 + h2(i, j) * 0.16 + fbm(x / 90, z / 90) * 0.34;
+      const sh = 0.86 + h2(i, j) * 0.16 + fbm(x / 90, z / 90) * TH.terrain.tint;
       col.push((base[0] + (ROCK[0] - base[0]) * rk) * sh,
                (base[1] + (ROCK[1] - base[1]) * rk) * sh,
                (base[2] + (ROCK[2] - base[2]) * rk) * sh);
@@ -327,7 +330,7 @@ function buildTerrain() {
     vertexColors: true, flatShading: true,
   }));
   m.receiveShadow = true;
-  scene.add(m);
+  courseRoot.add(m);
 
   return { minX, minZ, CELL, nx, nz, heights };
 }
@@ -355,7 +358,7 @@ function buildProps(tr) {
   }
   const pg = new THREE.BoxGeometry(1, 1, 1);
   pylons = new THREE.InstancedMesh(pg,
-    new THREE.MeshLambertMaterial({ color: 0x6b5c4c }), Math.max(1, legs.length * 2));
+    new THREE.MeshLambertMaterial({ color: TH.pylon }), Math.max(1, legs.length * 2));
   pylons.castShadow = true; pylons.receiveShadow = true;
   const mtx = new THREE.Matrix4(), q = new THREE.Quaternion();
   let n = 0;
@@ -369,15 +372,15 @@ function buildProps(tr) {
     }
   }
   pylons.count = n;
-  scene.add(pylons);
+  courseRoot.add(pylons);
 
   /* Marker posts. Cheap, and they do most of the work of communicating speed:
      a regular rhythm of verticals streaming past is more legible than any
      amount of blur. */
   postGroup = new THREE.Group();
   const bg = new THREE.BoxGeometry(0.3, 2.0, 0.3);
-  const mA = new THREE.MeshLambertMaterial({ color: 0xd8d2c4 });
-  const mB = new THREE.MeshLambertMaterial({ color: 0xc2452e });
+  const mA = new THREE.MeshLambertMaterial({ color: TH.post.a });
+  const mB = new THREE.MeshLambertMaterial({ color: TH.post.b });
   let k = 0;
   for (let s = 10; s < T.LENGTH - 10; s += 22, k++) {
     const { right, nrm } = basisAt(s);
@@ -389,7 +392,7 @@ function buildProps(tr) {
       postGroup.add(p);
     }
   }
-  scene.add(postGroup);
+  courseRoot.add(postGroup);
 
   /* Scatter. Two rules do almost all of the work of making a hillside look
      placed rather than sprinkled: trees CLUMP (a noise field decides where the
@@ -397,18 +400,19 @@ function buildProps(tr) {
      colour so clearings actually read as clearings), and nothing is the same
      size twice. Boulders go on the steep ground the trees refuse. */
   treeGroup = new THREE.Group();
-  const cone = new THREE.ConeGeometry(2.2, 7.5, 7);
-  const cone2 = new THREE.ConeGeometry(2.9, 5.2, 6);
+  const SC = TH.scatter;
+  const cone = new THREE.ConeGeometry(SC.tallR, SC.tallH, 7);
+  const cone2 = new THREE.ConeGeometry(SC.shortR, SC.shortH, 6);
   const trunk = new THREE.CylinderGeometry(0.35, 0.45, 2.2, 5);
   const rock = new THREE.IcosahedronGeometry(1.0, 0);
   /* Dark green plus a raised ambient: at 0x2b4230 with the key light behind
      them every conifer rendered as a pure black cutout. */
-  const cm = new THREE.MeshLambertMaterial({ color: 0x4d6b47 });
-  const cm2 = new THREE.MeshLambertMaterial({ color: 0x63794f });
-  const tm = new THREE.MeshLambertMaterial({ color: 0x5a4634 });
-  const rm = new THREE.MeshLambertMaterial({ color: 0x6d6459, flatShading: true });
+  const cm = new THREE.MeshLambertMaterial({ color: SC.coneA });
+  const cm2 = new THREE.MeshLambertMaterial({ color: SC.coneB });
+  const tm = new THREE.MeshLambertMaterial({ color: SC.trunk });
+  const rm = new THREE.MeshLambertMaterial({ color: SC.rockCol, flatShading: true });
 
-  const N = 820, NR = 190;
+  const N = SC.trees, NR = SC.rocks;
   const ci = new THREE.InstancedMesh(cone, cm, N);
   const ci2 = new THREE.InstancedMesh(cone2, cm2, N);
   const ti = new THREE.InstancedMesh(trunk, tm, N);
@@ -446,11 +450,11 @@ function buildProps(tr) {
       continue;
     }
     if (a + b >= N) continue;
-    if (alt > 0.80 || alt < 0.14) continue;           // no trees on ice or in town
-    if (vn(c.x / 58, c.z / 58) < 0.36) continue;      // the clearings
+    if (alt > SC.altHi || alt < SC.altLo) continue;
+    if (vn(c.x / 58, c.z / 58) < SC.clump) continue;  // the clearings
     const sc = 0.55 + Math.random() * 0.95;
     const tall = Math.random() < 0.72;
-    const y = gy + 2.2 + (tall ? 3.75 : 2.6) * sc;
+    const y = gy + 2.2 + (tall ? SC.tallH / 2 : SC.shortH / 2) * sc;
     mtx.compose(new THREE.Vector3(c.x, y, c.z), q, new THREE.Vector3(sc, sc, sc));
     (tall ? ci : ci2).setMatrixAt(tall ? a : b, mtx);
     mtx.compose(new THREE.Vector3(c.x, gy + 1.1 * sc, c.z), q, new THREE.Vector3(sc, sc, sc));
@@ -459,7 +463,7 @@ function buildProps(tr) {
   }
   ci.count = a; ci2.count = b; ti.count = a + b; ri.count = rk;
   treeGroup.add(ci, ci2, ti, ri);
-  scene.add(treeGroup);
+  courseRoot.add(treeGroup);
 }
 
 
@@ -475,7 +479,7 @@ function buildSky() {
   const g = new THREE.SphereGeometry(600, 32, 20);
   const p = g.attributes.position;
   const col = new Float32Array(p.count * 3);
-  const ZEN = [0.13, 0.23, 0.40], HOR = [0.80, 0.71, 0.60], GND = [0.30, 0.28, 0.28];
+  const ZEN = TH.sky.zenith, HOR = TH.sky.horizon, GND = TH.sky.ground;
   const v = new THREE.Vector3();
   for (let i = 0; i < p.count; i++) {
     v.fromBufferAttribute(p, i).normalize();
@@ -487,10 +491,10 @@ function buildSky() {
       const t = Math.min(1, -v.y / 0.35);
       c = [0, 1, 2].map((k) => HOR[k] + (GND[k] - HOR[k]) * t);
     }
-    const glow = Math.pow(Math.max(0, v.dot(SUN_DIR)), 9) * 1.1;
-    col[i * 3] = c[0] + glow * 0.95;
-    col[i * 3 + 1] = c[1] + glow * 0.72;
-    col[i * 3 + 2] = c[2] + glow * 0.40;
+    const glow = Math.pow(Math.max(0, v.dot(SUN_DIR)), TH.sky.glowPow) * 1.1;
+    col[i * 3]     = c[0] + glow * TH.sky.glow[0];
+    col[i * 3 + 1] = c[1] + glow * TH.sky.glow[1];
+    col[i * 3 + 2] = c[2] + glow * TH.sky.glow[2];
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   sky = new THREE.Mesh(g, new THREE.MeshBasicMaterial({
@@ -511,7 +515,7 @@ function buildDust() {
   dust = new THREE.InstancedMesh(
     new THREE.PlaneGeometry(1, 1),
     new THREE.MeshBasicMaterial({
-      color: 0xbfae95, transparent: true, opacity: 0.30,
+      color: 0xffffff, transparent: true, opacity: 0.30,
       depthWrite: false, side: THREE.DoubleSide,
     }), N);
   dust.frustumCulled = false;
@@ -554,7 +558,7 @@ function buildCart() {
   cart = new THREE.Group();
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(1.55, 0.42, 2.9),
-    new THREE.MeshLambertMaterial({ color: 0xb8452c }));
+    new THREE.MeshLambertMaterial({ color: 0xb8452c }));  // recoloured in build()
   body.position.y = 0.46; body.castShadow = true;
   cart.add(body);
 
@@ -665,17 +669,59 @@ export function init(canvas) {
   hemi = new THREE.HemisphereLight(0x9dc0e2, 0x5c5240, 1.15);
   scene.add(hemi);
 
+  buildCart();
+  buildDust();
+  build();
+  resize();
+  addEventListener('resize', resize);
+}
+
+/* Tear down and regenerate everything that belongs to a course. Called on boot
+   and whenever the venue changes. The cart, the sky dome, the dust and the
+   lights persist and are simply recoloured — only the world is rebuilt. */
+export function build() {
+  TH = THEME.get(T.THEME);
+  SUN_DIR.set(...TH.sun.dir).normalize();
+
+  renderer.toneMappingExposure = TH.exposure;
+  fog.color.set(TH.fog.color);
+  fog.near = CAM_DIST + TH.fog.near;
+  fog.far = CAM_DIST + TH.fog.far;
+  sun.color.set(TH.sun.color);
+  hemi.color.set(TH.hemi.sky);
+  hemi.groundColor.set(TH.hemi.ground);
+
+  if (courseRoot) {
+    /* GPU buffers are not garbage collected with the scene graph. Rebuilding a
+       course without disposing leaks a full terrain and road every switch. */
+    courseRoot.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) (Array.isArray(o.material) ? o.material : [o.material])
+        .forEach((m) => m.dispose());
+    });
+    scene.remove(courseRoot);
+  }
+  courseRoot = new THREE.Group();
+  scene.add(courseRoot);
+
+  if (sky) { sky.geometry.dispose(); sky.material.dispose(); scene.remove(sky); }
+  buildSky();
+
   /* Terrain first: the road needs to know where the ground is before it can
      build walls down to it. */
-  buildSky();
   const tr = buildTerrain();
   buildRoad(tr);
   buildCentreLine();
   buildProps(tr);
-  buildCart();
-  buildDust();
-  resize();
-  addEventListener('resize', resize);
+
+  cart.children[0].material.color.set(TH.cart.body);
+  cart.children[1].material.color.set(TH.cart.nose);
+  rider.getObjectByName('torso').material.color.set(TH.cart.rider);
+  rider.getObjectByName('head').material.color.set(TH.cart.skin);
+  dust.material.color.set(TH.dust);
+
+  camSize = 54;
+  camYaw = camYawTarget = T.headAt(0);
 }
 
 export function resize() {
@@ -745,13 +791,13 @@ export function frame(S, dt) {
 
   /* ---- toggles ---------------------------------------------------------- */
   scene.fog = opts.haze ? fog : null;
-  sun.intensity = opts.sun ? 2.0 : 0.30;
+  sun.intensity = opts.sun ? TH.sun.intensity : 0.30;
   sun.castShadow = opts.sun && opts.shadowMap;
   if (renderer.shadowMap.enabled !== (opts.sun && opts.shadowMap)) {
     renderer.shadowMap.enabled = opts.sun && opts.shadowMap;
     scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
   }
-  hemi.intensity = opts.sun ? 1.15 : 2.1;
+  hemi.intensity = opts.sun ? TH.hemi.intensity : 2.1;
   pylons.visible = opts.slabs;
   postGroup.visible = opts.posts;
   const want = opts.slopeTint ? roadTint : roadPlain;

@@ -2,11 +2,19 @@
    FREEWHEEL — wiring, screens and the main loop.
    ========================================================================== */
 
-const V = window.__V || '';
-const [T, SIM, R] = await Promise.all([
-  import(`./track.js?v=${V}`),
-  import(`./sim.js?v=${V}`),
-  import(`./render.js?v=${V}`),
+/* Imported WITHOUT a cache-busting query, deliberately.
+
+   A different URL is a different module instance. render.js and sim.js import
+   './track.js' plainly, so importing './track.js?v=N' here created a SECOND
+   copy of the track module with its own state: switching venue moved the HUD
+   and the physics to the new course while the renderer quietly kept building
+   the old one. Freshness is handled where it belongs — the dev server sends
+   no-store and vercel.json sends must-revalidate on every .js. */
+const [T, SIM, R, THEME] = await Promise.all([
+  import('./track.js'),
+  import('./sim.js'),
+  import('./render.js'),
+  import('./theme.js'),
 ]);
 
 const el = (id) => document.getElementById(id);
@@ -16,7 +24,10 @@ el('boot').remove();
 let S = SIM.create();
 let mode = 'intro';          // intro | play | settings | done
 let prevMode = 'intro';
-let best = +(localStorage.getItem('fw.best') || 0) || null;
+/* Records are per venue. One global best across courses of different lengths
+   would be meaningless, and per-hill is the number a player actually wants. */
+const bestKey = (id) => `fw.best.${id}`;
+const bestFor = (id) => +(localStorage.getItem(bestKey(id)) || 0) || null;
 
 /* -------------------------------- settings -------------------------------- */
 const SAVED = 'fw.opts';
@@ -57,14 +68,52 @@ syncSettingsUI();
 function show(next) {
   if (next === 'settings' && mode !== 'settings') prevMode = mode;
   mode = next;
-  for (const id of ['intro', 'settings', 'done']) el(id).classList.toggle('on', id === next);
+  for (const id of ['intro', 'venues', 'settings', 'done']) {
+    el(id).classList.toggle('on', id === next);
+  }
   el('hudWrap').classList.toggle('on', next === 'play');
   if (next === 'settings') syncSettingsUI();
+  if (next === 'venues') drawVenues();
 }
-function startRun() { S = SIM.create(); lastPumpShown = 0; show('play'); }
 
-el('go').onclick = startRun;
-el('again').onclick = startRun;
+function startRun(courseId) {
+  if (courseId && courseId !== T.ID) { T.load(courseId); R.build(); drawProfile(); }
+  S = SIM.create();
+  lastPumpShown = 0;
+  show('play');
+}
+
+/* The picker is generated from the course table, so a new venue appears here
+   the moment it exists in track.js — there is no second list to keep in step. */
+function drawVenues() {
+  const list = el('venueList');
+  list.innerHTML = '';
+  for (const id of T.COURSE_IDS) {
+    const C = T.COURSES[id];
+    const th = THEME.get(C.theme);
+    const stops = th.terrain.stops;
+    const css = (c) => `rgb(${c.map((v) => Math.round(Math.min(1, v * 1.25) * 255)).join(',')})`;
+    const b = bestFor(id);
+    const node = document.createElement('button');
+    node.className = 'venue';
+    node.style.setProperty('--c1', css(stops[stops.length - 1][1]));
+    node.style.setProperty('--c2', css(stops[1][1]));
+    node.innerHTML = `<div class="sw"></div>
+      <div><div class="vt">${C.title}</div>
+      <div class="vo">owns &mdash; ${C.owns}</div>
+      <div class="vb">${C.blurb}</div></div>
+      <div class="vr">${b ? `<div class="n">${b.toFixed(2)}</div><div class="l">best</div>`
+                          : '<div class="l">unrun</div>'}</div>`;
+    node.onclick = () => startRun(id);
+    list.appendChild(node);
+  }
+}
+
+el('go').onclick = () => show('venues');
+el('again').onclick = () => startRun();
+el('doneVen').onclick = () => show('venues');
+el('venBack').onclick = () => show('intro');
+el('venSet').onclick = () => show('settings');
 el('openSet').onclick = () => show('settings');
 el('doneSet').onclick = () => show('settings');
 el('closeSet').onclick = () => show(prevMode === 'settings' ? 'intro' : prevMode);
@@ -85,10 +134,11 @@ addEventListener('keydown', (e) => {
     return;
   }
   if (mode !== 'play') {
-    if (k === 'enter' || (k === ' ' && mode !== 'settings')) startRun();
+    if (k === 'enter' || (k === ' ' && mode === 'intro')) show('venues');
     return;
   }
   if (k === 'r') startRun();
+  if (k === 'v') show('venues');
 });
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 addEventListener('blur', () => keys.clear());
@@ -104,16 +154,18 @@ function readInput() {
 /* ------------------------------ elevation strip ---------------------------- */
 /* Drawn once. It is the progress bar and the fuel gauge at the same time,
    because on this hill those are literally the same quantity. */
-const PROF = (() => {
-  const W = 112, H = 340, pad = 8, pts = [];
+let PROF = [];
+function drawProfile() {
+  const W = 112, H = 340, pad = 8;
+  PROF = [];
   for (let s = 0; s <= T.LENGTH; s += 8) {
     const y = T.surfaceAt(s).y;
-    pts.push([pad + (s / T.LENGTH) * (W - pad * 2),
-              pad + (1 - (y - T.BOT_Y) / (T.TOP_Y - T.BOT_Y)) * (H - pad * 2)]);
+    PROF.push([pad + (s / T.LENGTH) * (W - pad * 2),
+               pad + (1 - (y - T.BOT_Y) / (T.TOP_Y - T.BOT_Y)) * (H - pad * 2)]);
   }
-  el('profline').setAttribute('points', pts.map((p) => p.join(',')).join(' '));
-  return pts;
-})();
+  el('profline').setAttribute('points', PROF.map((p) => p.join(',')).join(' '));
+}
+drawProfile();
 
 /* ---------------------------------- HUD ----------------------------------- */
 let flashT = 0, lastPumpShown = 0;
@@ -161,11 +213,13 @@ function finish() {
   el('dpump').textContent = (S.pumpTotal * 2.2369).toFixed(1);
   el('dair').textContent = S.airTotal.toFixed(1);
   el('dthrust').textContent = (S.thrustTotal * 2.2369).toFixed(1);
-  if (best === null || S.t < best) {
-    best = S.t; localStorage.setItem('fw.best', String(best));
+  el('dcourse').textContent = T.TITLE;
+  const b = bestFor(T.ID);
+  if (b === null || S.t < b) {
+    localStorage.setItem(bestKey(T.ID), String(S.t));
     el('dbest').textContent = 'a new best';
   } else {
-    el('dbest').textContent = `best ${best.toFixed(2)}s`;
+    el('dbest').textContent = `best ${b.toFixed(2)}s`;
   }
   show('done');
 }
@@ -209,7 +263,9 @@ show('intro');
 /* --------------------------------- console -------------------------------- */
 window.FW = {
   get S() { return S; }, set S(x) { S = x; },
-  tune: SIM.tune, opts: R.opts, T, SIM, R,
+  tune: SIM.tune, opts: R.opts, T, SIM, R, THEME,
+  simAll: (o) => { const r = SIM.simAll(o); console.table(r); return r; },
+  course: (id) => { startRun(id); return T.TITLE; },
   sim: (o) => { const r = SIM.sim(o); console.table(r); return r; },
   step: (n = 1) => { for (let i = 0; i < n; i++) SIM.step(S, HZ); return S; },
   play: startRun,

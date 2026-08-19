@@ -30,8 +30,25 @@ fast, so the throttle is real but its fuel is still the hill.
 | `R` | restart |
 | `ESC` | settings |
 
-The course is **1670 m with a 338 m drop** — a 20% average grade, three drop-offs
-(two cliffs and a flight of stairs), and 12-15 s of airtime in a normal run.
+## The hills
+
+Three venues, and each one **owns a mechanic** rather than a palette. If two
+courses ask the same thing of the player they are the same course wearing
+different paint, however different the screenshots look.
+
+| | owns | |
+|---|---|---|
+| **THE VALE** | line choice | sweepers and hairpins, 20% average grade, three drop-offs |
+| **THE SPILLWAY** | the pump | bowl-scale curvature, heavy banking, a dry concrete basin |
+| **THE COLD LINE** | grip | 0.42 grip falling to 0.28, brakes barely work |
+
+Measured, they behave differently rather than merely looking different — pump
+gain over a run is **77 on the spillway, 23 on the vale, 4.6 on the ice**.
+
+A course is a declarative array of segments and nothing else. Everything else is
+derived: the hillside, the cut walls, the pylons, where trees clump, the
+altitude bands. A new venue is one array in `track.js` and one entry in
+`theme.js`.
 
 ## Status
 
@@ -69,6 +86,20 @@ Physics numbers came out of `FW.sim()`, not out of taste:
   half of a cycle let a rider who simply mashed the key farm charge off the good
   halves while the bad halves cost speed but no charge — measured, mashing beat
   playing properly.
+- **A different URL is a different module.** `main.js` imported
+  `./track.js?v=4` for cache-busting while `render.js` imported `./track.js`
+  plainly, which created two track modules with separate state: switching venue
+  moved the HUD and the physics while the renderer quietly kept building the old
+  course. Freshness belongs in headers, not in import URLs.
+- **Dark ground throws the geometry away.** The spillway first inverted the
+  alpine arrangement — pale road on dark scrub. The terrain measured the same
+  1.7 m of relief per cell as the alpine hill and rendered as a flat olive
+  field, because a dark low-contrast albedo cannot show shading. Road darker
+  than ground, in every theme.
+- **A sine's crests are as tight as its compressions.** A washboard fast enough
+  to pump hard also launches you off every other metre — measured at 25% of the
+  course airborne, where you can neither pump nor steer. Real skateparks are
+  tight bowls with flat tops, so the `bowls` modifier is one too.
 - **A left-handed basis is not a rotation.** `{right, nrm, tan}` has determinant
   −1 at every heading, and `setFromRotationMatrix` silently returns a meaningless
   quaternion — the cart sat broadside across the road for the entire build.
@@ -83,7 +114,9 @@ Every readability cue is individually switchable in **Settings**, so the claim
 ## Console
 
 ```js
-FW.sim()        // compare policies: open / mash / tucked / pump
+FW.simAll()     // every venue x every policy — the variety claim, measured
+FW.sim()        // policies on the current course
+FW.course('spillway')
 FW.tune         // every physics constant, live
 FW.seek(1000)   // jump to a distance in metres
 FW.opts         // the readability toggles
@@ -103,7 +136,8 @@ a stale module reads exactly like a code bug.
 
 | file | what it holds |
 |---|---|
-| `track.js` | the course; grade authored directly, curvature by finite difference |
+| `track.js` | the courses; grade authored directly, curvature by finite difference |
+| `theme.js` | every colour, light and scatter rule, as data |
 | `sim.js` | cart physics and the headless policies |
 | `render.js` | the look, and the readability experiment |
 | `main.js` | screens, input, fixed-timestep loop |

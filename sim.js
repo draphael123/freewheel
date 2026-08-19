@@ -54,7 +54,11 @@ export const tune = {
   landAbsorbTucked: 0.28, // ...if you were crouched when you touched down
   steerRate: 5.4,         // m/s of lateral movement at full lock
   slide: 0.010,           // how hard a corner throws you toward the outside
-  uMax: T.HALF_W + 3.5,   // hard stop, so nobody tests the void
+  uMargin: 3.5,           /* how far past the verge you may stray before a hard
+                             stop. Relative, not absolute: HALF_W changes with
+                             the course, and a constant captured at module load
+                             would silently belong to whichever venue happened
+                             to load first. */
 
   /* The flywheel. Pumping spins it up, the throttle lets it back out — so
      there is a real accelerate button whose fuel is still the hill, which is
@@ -74,6 +78,8 @@ export function create() {
     air: false, yAir: 0, vyAir: 0,
     t: 0, done: false,
     charge: 0,              // seconds of thrust in the flywheel
+    strokeGain: 0,          // pump banked so far in the current stroke
+    lastEnd: 1,             // which end of the crouch travel we last reached
     N: 1,                   // load in g. the thing you are pumping against
     pumpRate: 0,            // dv/dt currently coming from the pump, for the HUD
     lastPump: 0,            // speed gained by the most recent extension
@@ -151,17 +157,28 @@ export function step(S, dt) {
       // Delta-v of one full extension = v * kv * crouchTravel * pumpGain.
       a += pump;
       S.pumpRate = pump;
-      if (cdot > 0) S.lastPump += pump * dt;
-      else if (cdot === 0) S.lastPump *= 0.90;
       if (pump > 0) S.pumpTotal += pump * dt;
 
-      /* Charge follows the SIGNED pump, so a badly timed extension drains the
-         wheel as surely as a good one fills it. Accruing on the positive half
-         only let a rider who simply mashed the key farm charge from the good
-         halves of a cycle while the bad halves cost speed but no charge —
-         measured, mashing beat playing properly by a second. */
-      S.charge = Math.max(0, Math.min(K.chargeMax,
-        S.charge + pump * dt * K.chargePerPump));
+      /* The wheel is wound by COMPLETED STROKES, not per frame.
+
+         Signed per-frame accrual looks correct and is not: charge is clamped at
+         zero, and any alternating signal against a floor accumulates, because
+         every negative excursion below zero is absorbed for free. Mashing the
+         key exploited exactly that and won the ice course by twelve seconds.
+
+         Crediting a stroke only when the rider actually reaches an end of the
+         crouch travel closes it, because a fast mash never gets there — at 3 Hz
+         the rider only ever oscillates around the middle. It also gives an
+         honest event to hang the HUD flash on. */
+      S.strokeGain += pump * dt;
+      const end = S.c >= 0.985 ? 1 : (S.c <= 0.015 ? 0 : -1);
+      if (end >= 0 && end !== S.lastEnd) {
+        S.lastEnd = end;
+        S.charge = Math.max(0, Math.min(K.chargeMax,
+          S.charge + S.strokeGain * K.chargePerPump));
+        S.lastPump = S.strokeGain;
+        S.strokeGain = 0;
+      }
 
       /* Spending. Deliberately available on climbs and flats, where gravity
          gives you nothing — that is where a throttle is worth having and where
@@ -179,7 +196,12 @@ export function step(S, dt) {
       const over = Math.max(0, Math.abs(S.u) - T.HALF_W);
       if (over > 0) a -= K.offRoad * over * S.v * 0.35;
 
-      if (S.input.brake) { a -= K.brake; S.brakeTotal += K.brake * dt; }
+      /* Brakes are a tyre force too, so ice takes them away as surely as it
+         takes away the corners. */
+      if (S.input.brake) {
+        const b = K.brake * T.gripAt(S.s);
+        a -= b; S.brakeTotal += b * dt;
+      }
 
       S.v = Math.max(0, S.v + a * dt);
       S.s += S.v * dt;
@@ -187,11 +209,18 @@ export function step(S, dt) {
   }
 
   /* ---- lateral ---------------------------------------------------------- */
+  /* Grip scales what the tyres can do in both directions at once: it resists
+     the outward slide and it is also how much of your steering input arrives.
+     Banking relieves the slide directly, because part of the cornering force
+     is now being supplied by the road being tilted rather than by friction. */
   if (!S.air) {
-    const drift = S.v * S.v * kh * K.slide;        // thrown to the outside
-    S.u += (S.input.steer * K.steerRate * Math.min(1, S.v / 7) + drift) * dt;
+    const grip = T.gripAt(S.s);
+    const lat = S.v * S.v * kh - K.G * Math.sin(T.bankAt(S.s));
+    const drift = lat * K.slide / grip;
+    S.u += (S.input.steer * K.steerRate * grip * Math.min(1, S.v / 7) + drift) * dt;
   }
-  S.u = Math.max(-K.uMax, Math.min(K.uMax, S.u));
+  const uMax = T.HALF_W + K.uMargin;
+  S.u = Math.max(-uMax, Math.min(uMax, S.u));
 
   if (S.v > S.vMax) S.vMax = S.v;
   if (S.s >= T.LENGTH) { S.s = T.LENGTH; S.done = true; }
@@ -202,16 +231,22 @@ export function step(S, dt) {
    Headless policies. These exist so we can ask whether the pump has a skill
    gradient at all before asking a human to feel for one.
    -------------------------------------------------------------------------- */
+/* Every policy steers for the centreline. Without this the headless rider
+   never touches the wheel, and on a low-grip course it is simply thrown off
+   the road — which reports as a physics result when it is really a harness
+   that never drove. */
+const hold = (S) => Math.max(-1, Math.min(1, -S.u * 0.42));
+
 export const POLICIES = {
   /* Never stands up. The aero baseline: what you get for doing nothing. */
-  tucked: () => ({ tuck: true, steer: 0, brake: false, thrust: false }),
+  tucked: (S) => ({ tuck: true, steer: hold(S), brake: false, thrust: false }),
 
   /* Never tucks. Should lose badly on drag — if it does not, the aero trade
      carries no weight and the tuck key is decoration. */
-  open: () => ({ tuck: false, steer: 0, brake: false, thrust: false }),
+  open: (S) => ({ tuck: false, steer: hold(S), brake: false, thrust: false }),
 
   /* Mashing. If this beats tucked, the mechanic rewards noise, not timing. */
-  mash: (S) => ({ tuck: (Math.floor(S.t * 6) % 2) === 0, steer: 0,
+  mash: (S) => ({ tuck: (Math.floor(S.t * 6) % 2) === 0, steer: hold(S),
                   brake: false, thrust: (Math.floor(S.t * 5) % 2) === 0 }),
 
   /* Plays it properly. The rider oscillates IN PHASE WITH THE ROAD: stand
@@ -231,7 +266,7 @@ export const POLICIES = {
        +7 m/s mechanic into -7.5 m/s. Stand up THROUGH the compression. */
     const kv = T.kvAt(S.s);
     return {
-      tuck: kv < tune.pumpKvMin, steer: 0, brake: false,
+      tuck: kv < tune.pumpKvMin, steer: hold(S), brake: false,
       /* Spend where gravity is not already paying: shallow or uphill road,
          and never while a compression is available to pump. */
       thrust: S.charge > 0 && kv < tune.pumpKvMin && T.pitchAt(S.s) > -0.14,
@@ -241,7 +276,7 @@ export const POLICIES = {
   /* The same rider with the flywheel disabled, so the throttle's contribution
      can be read off rather than assumed. */
   pumpNoThrust: (S) => ({
-    tuck: T.kvAt(S.s) < tune.pumpKvMin, steer: 0, brake: false, thrust: false,
+    tuck: T.kvAt(S.s) < tune.pumpKvMin, steer: hold(S), brake: false, thrust: false,
   }),
 };
 
@@ -281,6 +316,18 @@ export function run(policyName, opts = {}) {
 }
 
 export function sim(opts = {}) {
-  return (opts.policies
-    || ['open', 'mash', 'tucked', 'pumpNoThrust', 'pump']).map(n => run(n, opts));
+  const names = opts.policies || ['open', 'mash', 'tucked', 'pumpNoThrust', 'pump'];
+  if (!opts.course) return names.map((n) => run(n, opts));
+  const back = T.ID;
+  T.load(opts.course);
+  const rows = names.map((n) => ({ course: T.ID, ...run(n, opts) }));
+  T.load(back);
+  return rows;
+}
+
+/* Every venue, every policy. The question a variety claim actually has to
+   answer is whether the courses ask DIFFERENT things, so this is the report
+   that matters more than any single course's numbers. */
+export function simAll(opts = {}) {
+  return T.COURSE_IDS.flatMap((c) => sim({ ...opts, course: c }));
 }
