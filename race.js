@@ -49,10 +49,10 @@ export const tune = {
    difference in a race was traffic luck. A purely behavioural pecking order is
    just a random one wearing a nicer name. */
 export const RIVALS = [
-  { name: 'VESK',   color: 0x2f6f9e, skill: 0.94, pace: 1.07, line: -0.35, react: 0.10 },
-  { name: 'ORRIN',  color: 0xd9a13a, skill: 0.86, pace: 1.12, line:  0.40, react: 0.16 },
-  { name: 'HALLOW', color: 0x7a4f9c, skill: 0.79, pace: 1.18, line: -0.55, react: 0.22 },
-  { name: 'BRAKE',  color: 0x3f8f5c, skill: 0.71, pace: 1.25, line:  0.60, react: 0.30 },
+  { name: 'VESK',   num: 4,  color: 0x2f6f9e, skill: 0.94, pace: 1.07, line: -0.35, react: 0.10 },
+  { name: 'ORRIN',  num: 12, color: 0xd9a13a, skill: 0.86, pace: 1.12, line:  0.40, react: 0.16 },
+  { name: 'HALLOW', num: 7,  color: 0x7a4f9c, skill: 0.79, pace: 1.18, line: -0.55, react: 0.22 },
+  { name: 'BRAKE',  num: 21, color: 0x3f8f5c, skill: 0.71, pace: 1.25, line:  0.60, react: 0.30 },
 ];
 
 
@@ -75,7 +75,7 @@ export function createField() {
   RIVALS.forEach((r, i) => {
     const c = SIM.create();
     const D = DIFFICULTY[difficulty];
-    c.name = r.name; c.color = r.color;
+    c.name = r.name; c.color = r.color; c.num = r.num;
     c.ai = { ...r, skill: Math.max(0.3, Math.min(1, r.skill + D.nerve)) };
     c.pace = r.pace * D.pace;
     c.isPlayer = false;
@@ -83,7 +83,7 @@ export function createField() {
   });
 
   const you = SIM.create();
-  you.name = 'YOU'; you.isPlayer = true;
+  you.name = 'YOU'; you.isPlayer = true; you.num = 1;
   carts.push(you);
 
   /* You start at the BACK of the grid. It costs nothing and it is the single

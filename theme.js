@@ -140,3 +140,72 @@ export const THEMES = {
 };
 
 export const get = (name) => THEMES[name] || THEMES.alpine;
+
+/* ============================================================================
+   The descent as a day.
+
+   A single run drops 460 m from a snowline to a harbour, and until now it did
+   that under one unchanging light — which is most of why every part of the
+   course looked like every other part. The light now runs a continuous arc
+   keyed to how far DOWN you are, so you can tell your progress from the colour
+   alone before you read a single number:
+
+       0.00  the summit    cold, blue, the sun barely up behind you
+       0.45  the treeline  the sun clears the ridge; warm, long shadows
+       0.75  the terraces  low gold, the richest light of the run
+       1.00  the quay      dusk coming off the water
+
+   `late` is the season's own arc laid on top: run 8 is later in the year than
+   run 1, so the same descent finishes darker. The road failing and the light
+   going are the same story told twice.
+   ========================================================================== */
+const KEYS = [
+  { at: 0.00, sun: [0.62, 0.72, 0.95], sunI: 1.05, elev: 0.94, az: -0.52,
+    skyZen: [0.20, 0.32, 0.55], skyHor: [0.66, 0.72, 0.82],
+    hemiSky: 0x9fbcdc, hemiGnd: 0x8e93a0, fog: 0xb9c3d2, expo: 1.02 },
+  { at: 0.45, sun: [1.00, 0.90, 0.74], sunI: 2.15, elev: 0.66, az: -0.60,
+    skyZen: [0.34, 0.50, 0.70], skyHor: [0.86, 0.79, 0.68],
+    hemiSky: 0xa9cbe8, hemiGnd: 0x9c9078, fog: 0xc7bda9, expo: 1.12 },
+  { at: 0.78, sun: [1.00, 0.78, 0.50], sunI: 2.35, elev: 0.34, az: -0.72,
+    skyZen: [0.30, 0.42, 0.64], skyHor: [0.98, 0.76, 0.52],
+    hemiSky: 0xb8cbe0, hemiGnd: 0xb09274, fog: 0xd8b894, expo: 1.14 },
+  /* Dusk, but a dusk you can still DRIVE. The first pass at 1.45/0x8a7864 put
+     the quay's tarmac near black — atmospheric, and unreadable at 58 mph. */
+  { at: 1.00, sun: [1.00, 0.66, 0.48], sunI: 1.85, elev: 0.21, az: -0.86,
+    skyZen: [0.19, 0.26, 0.44], skyHor: [0.94, 0.62, 0.46],
+    hemiSky: 0x9db2cc, hemiGnd: 0xa48f78, fog: 0xc6a894, expo: 1.14 },
+];
+
+const mixN = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+const mixHex = (a, b, t) => {
+  const ar = (a >> 16) & 255, ag = (a >> 8) & 255, ab = a & 255;
+  const br = (b >> 16) & 255, bg = (b >> 8) & 255, bb = b & 255;
+  return ((ar + (br - ar) * t) << 16 | (ag + (bg - ag) * t) << 8 | (ab + (bb - ab) * t)) & 0xffffff;
+};
+
+export function daylight(t, late = 0) {
+  const u = Math.max(0, Math.min(1, t));
+  let i = 0;
+  while (i < KEYS.length - 2 && u > KEYS[i + 1].at) i++;
+  const A = KEYS[i], B = KEYS[i + 1];
+  const k = Math.max(0, Math.min(1, (u - A.at) / (B.at - A.at || 1)));
+  /* Smoothstep between keys: a linear blend of light shows a visible crease at
+     every keyframe, and there is nothing in the world to hide it behind. */
+  const f = k * k * (3 - 2 * k);
+  /* The season's dimming. Kept gentle — this is a mood, and a run you cannot
+     see is not atmospheric, it is broken. */
+  const dim = 1 - 0.20 * Math.max(0, Math.min(1, late));
+  const warm = 0.10 * Math.max(0, Math.min(1, late));
+  return {
+    sun: mixN(A.sun, B.sun, f),
+    sunI: (A.sunI + (B.sunI - A.sunI) * f) * dim,
+    elev: A.elev + (B.elev - A.elev) * f - 0.10 * late,
+    az: A.az + (B.az - A.az) * f,
+    skyZen: mixN(A.skyZen, B.skyZen, f).map((v) => v * dim),
+    skyHor: mixN(A.skyHor, B.skyHor, f),
+    hemiSky: mixHex(A.hemiSky, B.hemiSky, f),
+    hemiGnd: mixHex(A.hemiGnd, B.hemiGnd, f),
+    fog: mixHex(A.fog, B.fog, f),
+    expo: (A.expo + (B.expo - A.expo) * f) * (1 - 0.06 * late) + warm * 0,
+  };
+}

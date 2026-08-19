@@ -41,6 +41,19 @@ export const opts = {
      detailed. */
   contrast: 1.05,
   saturation: 1.15,
+  /* Tilt-shift. THE thing that makes flat-shaded geometry read as a beautifully
+     made MODEL rather than as untextured polygons: a shallow band of focus with
+     everything above and below it soft. It is a lie about the lens — a real
+     camera cannot do this at these distances — and it is exactly the lie that
+     says "this is small and close" to a human eye.
+
+     Applied in SCREEN space, not by depth. A depth-based DOF needs the depth
+     buffer and a lot more care; a horizontal band costs one smoothstep and, on
+     a camera that always looks down a road toward a horizon, lands on almost
+     the same pixels. */
+  tilt: 0.85,          // strength of the blur outside the band
+  tiltBand: 0.30,      // half-height of the sharp band, in screen fractions
+  tiltCentre: 0.46,    // where the band sits (0 bottom, 1 top)
   aberration: 0.45,   // scaled by speed; 0 at a standstill
   speedLines: 0.55,
 };
@@ -89,7 +102,8 @@ varying vec2 vUv;
 uniform sampler2D tScene;
 uniform sampler2D tBloom;
 uniform float uBloom, uExposure, uVignette, uGrain, uAberr, uLines, uSpeed, uTime;
-uniform float uContrast, uSat;
+uniform float uContrast, uSat, uTilt, uBand, uCentre;
+uniform vec2 uTexel;
 
 /* Stephen Hill's ACES fit. This has to happen HERE and not on the renderer,
    because the scene was drawn into a render target and three skips tone
@@ -131,6 +145,21 @@ void main() {
   sc.r = texture2D(tScene, uv + fromC * ab).r;
   sc.g = texture2D(tScene, uv).g;
   sc.b = texture2D(tScene, uv - fromC * ab).b;
+
+  /* Tilt-shift: blend toward a small blur of the scene, weighted by distance
+     from the focal band. Nine taps rather than a separable pass because it only
+     ever runs where the weight is non-zero and the radius is small. */
+  float defocus = smoothstep(uBand, uBand + 0.34, abs(uv.y - uCentre)) * uTilt;
+  if (defocus > 0.004) {
+    vec3 blur = vec3(0.0);
+    float r = 1.0 + defocus * 3.4;
+    for (int i = -1; i <= 1; i++) {
+      for (int j = -1; j <= 1; j++) {
+        blur += texture2D(tScene, uv + vec2(float(i), float(j)) * uTexel * r).rgb;
+      }
+    }
+    sc = mix(sc, blur / 9.0, defocus);
+  }
 
   vec3 bloom = texture2D(tBloom, uv).rgb;
   vec3 col = sc + bloom * uBloom;
@@ -194,6 +223,9 @@ export function init(three, r) {
       uAberr: { value: opts.aberration }, uLines: { value: opts.speedLines },
       uSpeed: { value: 0 }, uTime: { value: 0 },
       uContrast: { value: opts.contrast }, uSat: { value: opts.saturation },
+      uTilt: { value: opts.tilt }, uBand: { value: opts.tiltBand },
+      uCentre: { value: opts.tiltCentre },
+      uTexel: { value: new THREE.Vector2(1 / 1280, 1 / 720) },
     } });
 
   quad = new THREE.Mesh(g, compMat);
@@ -277,6 +309,10 @@ export function render(scene, camera, speed, exposure, time) {
   u.uTime.value = time;
   u.uContrast.value = opts.contrast;
   u.uSat.value = opts.saturation;
+  u.uTilt.value = opts.tilt;
+  u.uBand.value = opts.tiltBand;
+  u.uCentre.value = opts.tiltCentre;
+  u.uTexel.value.set(1 / W, 1 / H);
 
   renderer.toneMapping = THREE.NoToneMapping;   // the shader does ACES itself
   renderer.outputColorSpace = prevOut;

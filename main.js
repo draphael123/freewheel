@@ -53,7 +53,7 @@ const POST_ON = { ...R.post };
 /* Only these are user toggles. threshold/contrast/saturation are tuning, not
    preferences, and persisting them as booleans would let a stale save clobber
    a retune. */
-const POST_KEYS = ['bloom', 'grain', 'vignette', 'aberration', 'speedLines'];
+const POST_KEYS = ['bloom', 'grain', 'vignette', 'aberration', 'speedLines', 'tilt'];
 let units = localStorage.getItem('fw.units') === 'kmh' ? 'kmh' : 'mph';
 let fov = +(localStorage.getItem('fw.fov') || 62);
 const hudShow = { order: true, prof: true, tip: true };
@@ -341,6 +341,11 @@ function startRun(courseId, route) {
   /* Only the player carries a load — the rivals are hauling their own problem
      and modelling it would change nothing you can see. */
   S.load = (seasonCourse && T.forksOf(courseId || T.ID).length) ? pickedLoad : null;
+  /* Later runs are later in the year: the same descent finishes darker. The
+     road failing and the light going are the same story told twice. */
+  const sst = SEASON.state();
+  R.setSeasonProgress(sst && seasonCourse
+    ? (sst.run - 1) / Math.max(1, SEASON.RUNS - 1) : 0);
   countdown = 3.2;
   steerNow = 0;
   lastCount = 9;

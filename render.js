@@ -36,6 +36,43 @@ export function setRes(scale) {
 
 let renderer, scene, camera, persp, cart, rider, blob, reticle, tether, sun, hemi, fog;
 export const post = POST.opts;
+
+/* How far into the season we are, 0..1. The season dims and warms the whole
+   arc on top of the descent's own — see THEME.daylight. Set by main.js. */
+let seasonLate = 0;
+export const setSeasonProgress = (t) => { seasonLate = Math.max(0, Math.min(1, t || 0)); };
+
+/* Applied every frame from the player's position down the hill. Cheap: a
+   handful of colour writes and one direction. The sky dome's vertex colours are
+   baked, so the dome is TINTED rather than rebuilt — rebuilding a 40x24 sphere
+   per frame to change the time of day would be absurd. */
+const _dayCol = new THREE.Color();
+function applyDaylight(sProgress) {
+  const D = THEME.daylight(sProgress, seasonLate);
+  SUN_DIR.set(D.az, D.elev, -0.66).normalize();
+  sun.color.setRGB(D.sun[0], D.sun[1], D.sun[2]);
+  sun.intensity = opts.sun ? D.sunI : 0.30;
+  hemi.color.setHex(D.hemiSky);
+  hemi.groundColor.setHex(D.hemiGnd);
+  fog.color.setHex(D.fog);
+  if (sky) {
+    /* Tint toward the horizon colour of the moment; the baked gradient keeps
+       the shape and this shifts its cast. */
+    _dayCol.setRGB(
+      0.55 + D.skyHor[0] * 0.55,
+      0.55 + D.skyHor[1] * 0.50,
+      0.60 + D.skyHor[2] * 0.48);
+    sky.material.color.copy(_dayCol);
+  }
+  if (sunDisc) {
+    sunDisc.position.copy(SUN_DIR).multiplyScalar(3600);
+    sunDisc.lookAt(0, 0, 0);
+    sunDisc.material.color.setRGB(
+      Math.min(1, D.sun[0] * 1.05), Math.min(1, D.sun[1] * 1.0),
+      Math.min(1, D.sun[2] * 0.92));
+  }
+  return D.expo;
+}
 /* Base field of view for the chase and cockpit cameras. The frame() loop adds a
    speed kick on top of this, so it is a BASE, not the value in use. */
 let fovBase = 62, fovNow = 62;
@@ -49,7 +86,7 @@ export const VIEWS = ['iso', 'chase', 'cockpit'];
 let view = 'iso';
 export const setView = (v) => { view = VIEWS.includes(v) ? v : 'iso'; resize(); };
 export const getView = () => view;
-let sky, dust, dustP = [], shakeT = 0;
+let sky, sunDisc, dust, dustP = [], shakeT = 0;
 let courseRoot, TH = THEME.get('alpine');
 let rivalCarts = [], tunnelRoofs = [], cloudDecks = [];
 const hex = (c) => new THREE.Color(c[0], c[1], c[2]);
@@ -1886,6 +1923,7 @@ function buildSky() {
   disc.position.copy(SUN_DIR).multiplyScalar(3600);
   disc.lookAt(0, 0, 0);
   disc.renderOrder = -1;
+  sunDisc = disc;
   sky.add(disc);
 }
 
@@ -1966,6 +2004,30 @@ function updateDust(S, dt, at, right) {
 /* One cart, built to order. Rivals are the same object as yours in a different
    colour — nothing about them is cheaper or faked, because the moment they are
    they stop reading as cars in the race and start reading as scenery. */
+/* Race numbers, drawn once per number and cached. A team colour tells you WHICH
+   kart at a glance; a number tells you which one it was afterwards, and it is
+   the cheapest thing on a vehicle that says "this is a real entry in a real
+   race" rather than "this is the same model in four tints". */
+const _numTex = {};
+function numberPlate(n, ink) {
+  const key = n + '/' + ink;
+  if (_numTex[key]) return _numTex[key];
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 128;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#f0ead9'; g.beginPath(); g.arc(64, 64, 62, 0, 7); g.fill();
+  g.strokeStyle = '#' + ink.toString(16).padStart(6, '0');
+  g.lineWidth = 7; g.beginPath(); g.arc(64, 64, 56, 0, 7); g.stroke();
+  g.fillStyle = '#1b1e22';
+  g.font = 'bold 82px Georgia, serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(String(n), 64, 70);
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  _numTex[key] = t;
+  return t;
+}
+
 function makeCart(col) {
   const cart = new THREE.Group();
   const G = new THREE.Group();                 // body group: rolls and pitches
@@ -2120,11 +2182,27 @@ function makeCart(col) {
     ex.castShadow = true;
     G.add(ex);
   }
-  const roundel = new THREE.Mesh(new THREE.CircleGeometry(0.30, 14),
-    new THREE.MeshLambertMaterial({ color: 0xf0ead9, side: THREE.DoubleSide }));
-  roundel.position.set(0.78, 0.52, 0.15);
-  roundel.rotation.y = Math.PI / 2;
-  G.add(roundel);
+  /* A numbered roundel on BOTH flanks — one side only meant half the field was
+     anonymous depending on which way you passed them. */
+  const plate = numberPlate(col.num == null ? 1 : col.num, col.nose);
+  for (const sx of [-1, 1]) {
+    const roundel = new THREE.Mesh(new THREE.CircleGeometry(0.30, 18),
+      new THREE.MeshLambertMaterial({ map: plate, side: THREE.DoubleSide }));
+    roundel.position.set(sx * 0.79, 0.52, 0.15);
+    roundel.rotation.y = sx * Math.PI / 2;
+    G.add(roundel);
+  }
+
+  /* Livery: a stripe over the nose and along the spine, in the trim colour.
+     Two boxes, and the cart stops being a solid block of one hue. */
+  const spine = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.05, 2.5), trim);
+  spine.position.set(0, 0.68, 0.05);
+  G.add(spine);
+  for (const sx of [-0.19, 0.19]) {
+    const chev = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.05, 1.1), trim);
+    chev.position.set(sx, 0.60, 1.35);
+    G.add(chev);
+  }
 
   const rider = new THREE.Group();
   const suit = new THREE.MeshLambertMaterial({ color: col.rider });
@@ -2363,7 +2441,7 @@ export function build() {
      poked cart.children[0].material, which stopped being a Mesh the moment the
      body gained a group to roll and pitch inside. */
   if (cart) dispose(cart);
-  cart = makeCart(TH.cart);
+  cart = makeCart({ ...TH.cart, num: 1 });
   rider = cart.userData.rider;
   dust.material.color.set(TH.dust);
 
@@ -2410,13 +2488,24 @@ function dispose(root) {
 
 /* Rivals get their own meshes on demand, keyed to the field. Called whenever a
    race starts; safe to call repeatedly. */
+/* A trim colour that actually contrasts with the body rather than being the
+   same hue again — rivals used to pass nose:c.color, so their "trim" was
+   invisible and every rival was one flat block of colour. */
+function liveryTrim(hex) {
+  const c = new THREE.Color(hex);
+  const hsl = {};
+  c.getHSL(hsl);
+  return new THREE.Color().setHSL((hsl.h + 0.5) % 1,
+    Math.min(1, hsl.s * 0.9 + 0.15), hsl.l > 0.5 ? 0.22 : 0.78).getHex();
+}
+
 export function setField(carts) {
   for (const m of rivalCarts) dispose(m);
   rivalCarts = [];
   for (const c of carts) {
     if (c.isPlayer) continue;
-    const m = makeCart({ body: c.color, nose: c.color, rider: 0x22262b,
-                         skin: TH.cart.skin });
+    const m = makeCart({ body: c.color, nose: liveryTrim(c.color), rider: 0x22262b,
+                         skin: TH.cart.skin, num: c.num });
     m.userData.cart = c;
     rivalCarts.push(m);
   }
@@ -2685,10 +2774,15 @@ export function frame(S, dt) {
   /* Post. `speed` is normalised so the lens effects have something meaningful
      to scale against: aberration and speed lines at 20 mph would just be
      noise. Falls back to a plain render if the chain is off or unavailable. */
+  /* The day runs off how far DOWN the mountain you are, not off a clock: the
+     descent IS the arc, so a slow run and a fast one see the same light in the
+     same places and the colour is a reliable read on your progress. */
+  const dayExpo = applyDaylight(T.LENGTH ? S.s / T.LENGTH : 0);
   postClock += dt;
   const spd = Math.max(0, Math.min(1, (S.v - 12) / 26));
   if (!POST.opts.enabled ||
-      !POST.render(scene, active, spd, TH.exposure, postClock)) {
+      !POST.render(scene, active, spd, dayExpo, postClock)) {
+    renderer.toneMappingExposure = dayExpo;
     renderer.render(scene, active);
   }
 }

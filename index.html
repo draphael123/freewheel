@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>FREEWHEEL</title>
-<meta name="description" content="No engine. Height is your fuel. A gravity racer down a mountain that is also a town.">
+<meta name="description" content="The road is failing, and you are what's failing it. A downhill kart racer where every load you take down wears out the line you drove.">
 <style>
   :root{
     --ink:#f2ebde;
@@ -233,19 +233,30 @@
 <!-- ------------------------------- intro ------------------------------- -->
 <div class="screen" id="intro"><div class="sheet">
   <div class="title">FREEWHEEL</div>
-  <div class="kicker">no engine · height is your fuel</div>
+  <div class="kicker">the road is failing &middot; and you are what&rsquo;s failing it</div>
   <div class="rule"></div>
   <div class="body">
-    Once a year the mountain closes and the whole town becomes the track. No
-    motors — only what gravity lends you, and only until you spend it.
+    This is the last working season on the mountain road. You haul down it,
+    against four others who want the same run, from the snowline to the sea.
     <br><br>
-    Hold <span class="key">SPACE</span> to tuck: low, fast, cheap.
-    <b>Let go as the road compresses under you</b> — when the load meter passes
-    1&nbsp;g — and you pump speed out of the hill itself. Stand up anywhere else
-    and you are just a sail.
+    <b>Every load you take down wears out the line you drove.</b> The fast road
+    gets greasier and narrower each time you use it, and then one run it is
+    simply gone — chained off, collapsed, under water. There are eight runs in a
+    season and the mountain will not last all of them.
+    <br><br>
+    So the choice is never only which way is quickest. It is how much road you
+    are willing to spend to get there, and what you are willing to carry:
+    an overload pays half again and breaks the road under you almost twice as
+    fast.
+    <br><br>
+    <span class="key">W</span> go &middot; <span class="key">S</span> brake
+    &middot; <span class="key">A</span>&thinsp;/&thinsp;<span class="key">D</span> steer
+    &middot; <span class="key">SPACE</span> drift &middot;
+    <span class="key">SHIFT</span> spend boost &middot;
+    <span class="key">C</span> camera. Drifting is what charges the boost.
   </div>
   <div class="actions">
-    <button class="btn pri" id="go">choose a hill</button>
+    <button class="btn pri" id="go">take the road</button>
     <button class="btn" id="openSet">settings</button>
   </div>
 </div></div>
@@ -253,7 +264,7 @@
 <!-- ------------------------------- venues ------------------------------ -->
 <div class="screen" id="venues"><div class="sheet">
   <div class="title" style="font-size:22px">THE HILLS</div>
-  <div class="kicker">each one asks for something different</div>
+  <div class="kicker">the vale runs a season &middot; the others run one-off</div>
   <div class="venues" id="venueList"></div>
   <div class="actions">
     <button class="btn" id="venBack">back</button>
@@ -322,6 +333,8 @@
       <div class="rd">Darkens the corners toward the road</div></div><div class="sw"></div></div>
     <div class="row" data-post="aberration"><div><div class="rn">Lens fringing</div>
       <div class="rd">Colour split at the edges, growing with speed</div></div><div class="sw"></div></div>
+    <div class="row" data-post="tilt"><div><div class="rn">Miniature focus</div>
+      <div class="rd">Tilt-shift &mdash; sharp band, soft above and below</div></div><div class="sw"></div></div>
     <div class="row" data-post="speedLines"><div><div class="rn">Speed lines</div>
       <div class="rd">Radial streaks once you are really moving</div></div><div class="sw"></div></div>
     <div class="row" style="cursor:default"><div><div class="rn">Field of view</div>
@@ -415,7 +428,7 @@
   <div class="hud pane" id="load">
     <div class="lbl">grip</div>
     <div class="bar"><div class="fill" id="loadfill"></div><div class="one" style="left:62%"></div></div>
-    <div class="cue" id="cue">tuck</div>
+    <div class="cue" id="cue">gripping</div>
   </div>
 
   <div class="hud pane" id="chg">
@@ -441,7 +454,7 @@
   </div>
   <div class="hud" id="count"></div>
 
-  <div class="hud" id="flash"><div class="n" id="flashn">+0.0</div><div class="t">pump</div></div>
+  <div class="hud" id="flash"><div class="n" id="flashn">+0.0</div><div class="t">boost</div></div>
   <div class="hud pane" id="order"><h4>running order</h4><div id="orderList"></div></div>
   <div class="hud" id="tip">w — go &middot; s — brake &middot; a/d — steer &middot; space — drift &middot; shift — boost &middot; c — camera &middot; m — sound</div>
 </div>
